@@ -1,6 +1,60 @@
 import uuid
 from django.db import models
 
+
+# ==========================================
+# 0. Tablas de Referencia (Catálogos de Dominio)
+# ==========================================
+
+class TipoDocumentoPaciente(models.Model):
+    """Tipos de documento de identidad válidos en Colombia (RF-04)."""
+    codigo = models.CharField(max_length=3, unique=True)
+    descripcion = models.CharField(max_length=100)
+    activo = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'tipo_documento_paciente_Lab'
+
+    def __str__(self):
+        return f"{self.codigo} - {self.descripcion}"
+
+
+class SexoBiologico(models.Model):
+    """Sexo biológico del paciente."""
+    codigo = models.CharField(max_length=1, unique=True)
+    descripcion = models.CharField(max_length=30)
+
+    class Meta:
+        db_table = 'sexo_biologico_Lab'
+
+    def __str__(self):
+        return self.descripcion
+
+
+class EstadoOrden(models.Model):
+    """Estados posibles de una orden de laboratorio."""
+    nombre = models.CharField(max_length=30, unique=True)
+    descripcion = models.CharField(max_length=200, blank=True, null=True)
+
+    class Meta:
+        db_table = 'estado_orden_Lab'
+
+    def __str__(self):
+        return self.nombre
+
+
+class EstadoExamen(models.Model):
+    """Estados posibles de un examen solicitado."""
+    nombre = models.CharField(max_length=30, unique=True)
+    descripcion = models.CharField(max_length=200, blank=True, null=True)
+
+    class Meta:
+        db_table = 'estado_examen_Lab'
+
+    def __str__(self):
+        return self.nombre
+
+
 # ==========================================
 # 1. Catálogos y Estándares (Normativa)
 # ==========================================
@@ -36,35 +90,26 @@ class ParametroExamen(models.Model):
 # ==========================================
 
 class Paciente(models.Model):
-    TIPO_DOCUMENTO_CHOICES = [
-        ('CC', 'Cédula de Ciudadanía'),
-        ('CE', 'Cédula de Extranjería'),
-        ('TI', 'Tarjeta de Identidad'),
-        ('RC', 'Registro Civil'),
-        ('PA', 'Pasaporte'),
-        ('MS', 'Menor sin Identificación'),
-        ('AS', 'Adulto sin Identificación'),
-        ('PEP', 'Permiso Especial de Permanencia'),
-        ('PPT', 'Permiso de Protección Temporal'),
-    ]
-
-    SEXO_CHOICES = [
-        ('M', 'Masculino'),
-        ('F', 'Femenino'),
-        ('I', 'Indeterminado'),
-    ]
-
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    tipo_documento = models.CharField(max_length=3, choices=TIPO_DOCUMENTO_CHOICES)
+    tipo_documento = models.ForeignKey(
+        TipoDocumentoPaciente,
+        on_delete=models.RESTRICT,
+        related_name='pacientes',
+    )
     numero_documento = models.CharField(max_length=20)
     primer_nombre = models.CharField(max_length=50)
     segundo_nombre = models.CharField(max_length=50, blank=True, null=True)
     primer_apellido = models.CharField(max_length=50)
     segundo_apellido = models.CharField(max_length=50, blank=True, null=True)
     fecha_nacimiento = models.DateField()
-    sexo_biologico = models.CharField(max_length=1, choices=SEXO_CHOICES)
+    sexo_biologico = models.ForeignKey(
+        SexoBiologico,
+        on_delete=models.RESTRICT,
+        related_name='pacientes',
+    )
     telefono = models.CharField(max_length=15, blank=True, null=True)
     correo_electronico = models.EmailField(max_length=100, blank=True, null=True)
+    activo = models.BooleanField(default=True)
     fecha_creacion = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -73,7 +118,7 @@ class Paciente(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.primer_nombre} {self.primer_apellido} ({self.tipo_documento} {self.numero_documento})"
+        return f"{self.primer_nombre} {self.primer_apellido} ({self.tipo_documento.codigo} {self.numero_documento})"
 
 
 # ==========================================
@@ -81,19 +126,16 @@ class Paciente(models.Model):
 # ==========================================
 
 class OrdenLaboratorio(models.Model):
-    ESTADO_ORDEN_CHOICES = [
-        ('Registrada', 'Registrada'),
-        ('En Proceso', 'En Proceso'),
-        ('Finalizada', 'Finalizada'),
-        ('Cancelada', 'Cancelada'),
-    ]
-
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     paciente = models.ForeignKey(Paciente, on_delete=models.RESTRICT, related_name='ordenes')
     numero_orden = models.CharField(max_length=20, unique=True)
     fecha_orden = models.DateTimeField(auto_now_add=True)
     observaciones_clinicas = models.TextField(blank=True, null=True)
-    estado_general = models.CharField(max_length=30, choices=ESTADO_ORDEN_CHOICES, default='Registrada')
+    estado_general = models.ForeignKey(
+        EstadoOrden,
+        on_delete=models.RESTRICT,
+        related_name='ordenes',
+    )
 
     def __str__(self):
         return f"Orden {self.numero_orden} - {self.paciente}"
@@ -111,18 +153,15 @@ class MuestraFisica(models.Model):
 
 
 class ExamenSolicitado(models.Model):
-    ESTADO_EXAMEN_CHOICES = [
-        ('Pendiente', 'Pendiente'),
-        ('Muestra Recolectada', 'Muestra Recolectada'),
-        ('En Análisis', 'En Análisis'),
-        ('Validado', 'Validado'),
-    ]
-
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     orden = models.ForeignKey(OrdenLaboratorio, on_delete=models.CASCADE, related_name='examenes_solicitados')
     cups = models.ForeignKey(CatalogoCups, on_delete=models.RESTRICT)
     muestra = models.ForeignKey(MuestraFisica, on_delete=models.SET_NULL, null=True, blank=True, related_name='examenes')
-    estado_examen = models.CharField(max_length=30, choices=ESTADO_EXAMEN_CHOICES, default='Pendiente')
+    estado_examen = models.ForeignKey(
+        EstadoExamen,
+        on_delete=models.RESTRICT,
+        related_name='examenes_solicitados',
+    )
 
     def __str__(self):
         return f"{self.cups.descripcion} - Orden {self.orden.numero_orden}"

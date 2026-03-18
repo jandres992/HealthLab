@@ -1,5 +1,9 @@
-from rest_framework import viewsets
+import logging
+
+from rest_framework import status, viewsets
+from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView
+
 from .models import (
     TipoId, Sexo, Municipio, Departamento, Usuario,
     TipoUsuario, Permiso, UsuarioXPermiso, DispositivoConfianza
@@ -9,6 +13,8 @@ from .serializers import (
     UsuarioSerializer, TipoUsuarioSerializer, PermisoSerializer,
     UsuarioXPermisoSerializer, DispositivoConfianzaSerializer, TokenPersonalizadoSerializer
 )
+
+logger = logging.getLogger(__name__)
 
 class TipoIdViewSet(viewsets.ModelViewSet):
     queryset = TipoId.objects.all()
@@ -48,6 +54,36 @@ class DispositivoConfianzaViewSet(viewsets.ModelViewSet):
 
 class LoginPersonalizadoView(TokenObtainPairView):
     """
-    Toma el usuario y contraseña y devuelve un token de acceso y uno de refresco.
+    Toma el usuario y contraseña, devuelve JWT y registra el dispositivo de confianza.
     """
     serializer_class = TokenPersonalizadoSerializer
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+
+        try:
+            serializer.is_valid(raise_exception=True)
+        except Exception as exc:
+            logger.warning("Intento de login fallido para usuario %s", request.data.get('username'))
+            return Response({'detalle': str(exc)}, status=status.HTTP_401_UNAUTHORIZED)
+
+        user = serializer.user
+        payload = serializer.validated_data
+
+        device_id = request.data.get('device_id')
+        nombre = request.data.get('nombre_dispositivo') or 'Dispositivo no identificado'
+        user_agent = request.data.get('user_agent') or request.META.get('HTTP_USER_AGENT', '')
+        es_confiable = str(request.data.get('es_confiable', 'true')).lower() in ['1', 'true', 'si', 'yes']
+
+        if device_id:
+            DispositivoConfianza.objects.update_or_create(
+                usuario=user,
+                device_id=device_id,
+                defaults={
+                    'nombre': nombre,
+                    'user_agent': user_agent,
+                    'es_confiable': es_confiable,
+                },
+            )
+
+        return Response(payload, status=status.HTTP_200_OK)

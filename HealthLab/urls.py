@@ -30,6 +30,7 @@ urlpatterns = [
 
     # 4. (Opcional) Interfaz gráfica de Redoc (Otra vista muy elegante para documentar APIs)
     path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
+    path('', include('laboratorio.urls')),  # Expone tambien /api/v1/* segun RF-09.
     path('lab/', include('laboratorio.urls')),
     path('usr/', include('usuarios.urls')),
 ]
