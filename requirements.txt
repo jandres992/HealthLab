@@ -6,9 +6,11 @@ django-cors-headers==4.9.0
 djangorestframework==3.16.1
 djangorestframework_simplejwt==5.5.1
 drf-spectacular==0.29.0
+gunicorn==25.3.0
 inflection==0.5.1
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
+packaging==26.2
 pillow==12.1.1
 PyJWT==2.11.0
 PyYAML==6.0.3
