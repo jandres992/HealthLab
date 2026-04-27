@@ -1,0 +1,9 @@
+name: "new-mcp-server"
+version: "1.0.0"
+mcpServers:
+  - name: "filesystem"
+    command: "npx"
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-filesystem"
+      - "/home/andres/aplicaciones/HealthLab"
