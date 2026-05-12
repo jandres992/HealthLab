@@ -78,13 +78,31 @@ class UsuarioSerializer(serializers.ModelSerializer):
         return super().update(instance, validated_data)
 
 class TokenPersonalizadoSerializer(TokenObtainPairSerializer):
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        
+        # Obtener el rol (primer tipo de usuario encontrado)
+        usuario_permiso = UsuarioXPermiso.objects.filter(usuario=self.user).select_related('permiso__tipo_usuario').first()
+        rol = usuario_permiso.permiso.tipo_usuario.tipo if usuario_permiso else "Medico"
+        
+        data['rol'] = rol
+        data['user'] = {
+            'id': self.user.id,
+            'username': self.user.username,
+            'p_nombre': getattr(self.user, 'p_nombre', ''),
+            'p_apellido': getattr(self.user, 'p_apellido', ''),
+            'email': self.user.email,
+            'is_superuser': self.user.is_superuser,
+            'is_staff': self.user.is_staff,
+        }
+        return data
+
     @classmethod
     def get_token(cls, user):
         token = super().get_token(user)
 
-        # Agregamos datos personalizados al payload del token
+        # Agregamos datos personalizados al payload del token (dentro del JWT)
         token['username'] = user.username
-        # Manejamos los nombres asumiendo que pueden ser nulos según tu modelo
         nombre = getattr(user, 'p_nombre', '') or ''
         apellido = getattr(user, 'p_apellido', '') or ''
         token['nombre_completo'] = f"{nombre} {apellido}".strip()

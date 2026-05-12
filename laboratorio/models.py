@@ -206,6 +206,14 @@ class ConfiguracionEquipo(models.Model):
 # 2. Pacientes — FASE 2
 # ==========================================
 
+REGIMEN_CHOICES = [
+    ('Contributivo', 'Contributivo'),
+    ('Subsidiado', 'Subsidiado'),
+    ('Vinculado', 'Vinculado'),
+    ('Particular', 'Particular'),
+    ('Otro', 'Otro'),
+]
+
 class Paciente(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     tipo_documento = models.ForeignKey(
@@ -226,6 +234,34 @@ class Paciente(models.Model):
     )
     telefono = models.CharField(max_length=15, blank=True, null=True)
     correo_electronico = models.EmailField(max_length=100, blank=True, null=True)
+    # Ubicación y Régimen — RIPS (Colombia)
+    municipio_residencia = models.ForeignKey(
+        'usuarios.Municipio',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pacientes',
+        help_text="Municipio de residencia del paciente (DIVIPOLA)."
+    )
+    departamento_residencia = models.ForeignKey(
+        'usuarios.Departamento',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pacientes',
+        help_text="Departamento de residencia del paciente (DIVIPOLA)."
+    )
+    regimen_salud = models.CharField(
+        max_length=20,
+        choices=REGIMEN_CHOICES,
+        default='Particular',
+        help_text="Régimen de afiliación al sistema de salud."
+    )
+    # Legal — Colombia (Ley 1581)
+    consentimiento_habeas_data = models.BooleanField(
+        default=False,
+        help_text="Indica si el paciente aceptó el tratamiento de datos personales."
+    )
     activo = models.BooleanField(default=True)
     fecha_creacion = models.DateTimeField(auto_now_add=True)
 
@@ -248,6 +284,43 @@ class Paciente(models.Model):
 # ==========================================
 # 3. Flujo Operativo — FASES 2, 3 y 5
 # ==========================================
+
+FINALIDAD_CHOICES = [
+    ('Atencion Parto', 'Atención Parto'),
+    ('Atencion Recien Nacido', 'Atención Recién Nacido'),
+    ('Atencion Planificacion Familiar', 'Planificación Familiar'),
+    ('Deteccion Alteraciones Crecimiento', 'Crecimiento y Desarrollo'),
+    ('Deteccion Alteraciones Joven', 'Detección Joven'),
+    ('Deteccion Alteraciones Embarazo', 'Detección Embarazo'),
+    ('Deteccion Alteraciones Adulto', 'Detección Adulto'),
+    ('Deteccion Alteraciones Agudeza Visual', 'Agudeza Visual'),
+    ('Deteccion Enfermedad Profesional', 'Enf. Profesional'),
+    ('No Aplica', 'No Aplica'),
+]
+
+CAUSA_EXTERNA_CHOICES = [
+    ('Accidente de trabajo', 'Accidente de trabajo'),
+    ('Accidente de transito', 'Accidente de tránsito'),
+    ('Accidente rabico', 'Accidente rábico'),
+    ('Accidente ofidico', 'Accidente ofídico'),
+    ('Otro tipo de accidente', 'Otro tipo de accidente'),
+    ('Evento catastrofico', 'Evento catastrófico'),
+    ('Lesion por agresion', 'Lesión por agresión'),
+    ('Lesion auto infligida', 'Lesión auto infligida'),
+    ('Sospecha maltrato fisico', 'Sospecha maltrato físico'),
+    ('Sospecha abuso sexual', 'Sospecha abuso sexual'),
+    ('Sospecha violencia sexual', 'Sospecha violencia sexual'),
+    ('Sospecha maltrato emocional', 'Sospecha maltrato emocional'),
+    ('Enfermedad general', 'Enfermedad general'),
+    ('Enfermedad profesional', 'Enfermedad profesional'),
+    ('Otra', 'Otra'),
+]
+
+TIPO_DIAGNOSTICO_CHOICES = [
+    ('Impresion diagnostica', 'Impresión diagnóstica'),
+    ('Confirmado nuevo', 'Confirmado nuevo'),
+    ('Confirmado repetido', 'Confirmado repetido'),
+]
 
 class OrdenLaboratorio(models.Model):
     """
@@ -296,6 +369,22 @@ class OrdenLaboratorio(models.Model):
     convenio = models.CharField(
         max_length=100, blank=True, null=True,
         help_text="Convenio / aseguradora / EPS del paciente."
+    )
+    # Nuevos campos RIPS (Colombia)
+    finalidad_consulta = models.CharField(
+        max_length=40,
+        choices=FINALIDAD_CHOICES,
+        default='No Aplica'
+    )
+    causa_externa = models.CharField(
+        max_length=40,
+        choices=CAUSA_EXTERNA_CHOICES,
+        default='Enfermedad general'
+    )
+    tipo_diagnostico = models.CharField(
+        max_length=30,
+        choices=TIPO_DIAGNOSTICO_CHOICES,
+        default='Impresion diagnostica'
     )
     estado_general = models.ForeignKey(
         EstadoOrden,

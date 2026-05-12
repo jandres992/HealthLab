@@ -194,9 +194,14 @@ class ParametroExamenViewSet(EstandarRespuestaViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
-        cups_id = self.request.query_params.get('cups')
-        if cups_id:
-            qs = qs.filter(cups__codigo_cups=cups_id)
+        cups_query = self.request.query_params.get('cups')
+        if cups_query:
+            if cups_query.isdigit():
+                # Si es numérico, intentamos filtrar por PK del catálogo
+                qs = qs.filter(cups_id=cups_query)
+            else:
+                # Si no, filtramos por el código CUPS (ej: 902207)
+                qs = qs.filter(cups__codigo_cups=cups_query)
         return qs
 
 
@@ -289,22 +294,76 @@ class OrdenLaboratorioViewSet(EstandarRespuestaViewSet):
         Requiere que la orden esté en estado Finalizada (o Validada).
         """
         orden = self.get_object()
-        estados_validos = {'Finalizada', 'Validada', 'Reportada', 'Entregada'}
-        if orden.estado_general.nombre not in estados_validos:
+        
+        # Si el informe ya existe y la orden está finalizada, servirlo directamente
+        informe_existente = InformeResultados.objects.filter(orden=orden).first()
+        if informe_existente and informe_existente.archivo_pdf:
+            try:
+                with informe_existente.archivo_pdf.open('rb') as f:
+                    pdf_bytes = f.read()
+                response = HttpResponse(pdf_bytes, content_type='application/pdf')
+                response['Content-Disposition'] = f'attachment; filename="informe_{orden.numero_orden}.pdf"'
+                return response
+            except Exception:
+                pass 
+        
+        estados_finales = {'Finalizada', 'Validada', 'Reportada', 'Entregada'}
+        es_preliminar = orden.estado_general.nombre not in estados_finales
+
+        try:
+            pdf_bytes = generar_pdf_orden(orden, preliminar=es_preliminar)
+            hash_doc = hashlib.sha256(pdf_bytes).hexdigest()
+
+            # Solo persistimos en DB si es la versión FINAL
+            if not es_preliminar:
+                informe, _ = InformeResultados.objects.update_or_create(
+                    orden=orden,
+                    defaults={
+                        'generado_por': request.user if request.user.is_authenticated else None,
+                        'hash_documento': hash_doc,
+                    },
+                )
+                nombre_archivo = f"informe_{orden.numero_orden}.pdf"
+                informe.archivo_pdf.save(nombre_archivo, ContentFile(pdf_bytes), save=True)
+            
+            response = HttpResponse(pdf_bytes, content_type='application/pdf')
+            prefijo = "PRELIMINAR_" if es_preliminar else ""
+            response['Content-Disposition'] = f'attachment; filename="{prefijo}informe_{orden.numero_orden}.pdf"'
+            return response
+        except Exception as e:
+            logger.error("Error generando PDF para orden %s: %s", pk, str(e))
+            return Response(
+                {'estado': 'error_servidor', 'mensaje': 'Error al generar el PDF del informe.', 'detalle': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    @action(detail=True, methods=['post'], url_path='finalizar')
+    def finalizar(self, request, pk=None):
+        """
+        FASE 6 — Cierra la orden manualmente, marcándola como Finalizada y 
+        generando el PDF de resultados persistente.
+        """
+        orden = self.get_object()
+        
+        # Validar que al menos tenga un examen validado para poder finalizar
+        examenes_validados = orden.examenes_solicitados.filter(estado_examen__nombre='Validado').count()
+        if examenes_validados == 0:
             return Response(
                 {
                     'estado': 'error_validacion',
-                    'mensaje': (
-                        f"La orden debe estar en uno de los estados: {', '.join(estados_validos)}. "
-                        f"Estado actual: '{orden.estado_general.nombre}'."
-                    ),
+                    'mensaje': 'No se puede finalizar una orden que no tiene ningún examen validado clínicamente.'
                 },
-                status=status.HTTP_409_CONFLICT,
+                status=status.HTTP_400_BAD_REQUEST
             )
+
+        estado_finalizada, _ = EstadoOrden.objects.get_or_create(nombre='Finalizada')
+        orden.estado_general = estado_finalizada
+        orden.save(update_fields=['estado_general'])
+
+        # Generar y persistir el PDF inmediatamente al finalizar
         try:
             pdf_bytes = generar_pdf_orden(orden)
             hash_doc = hashlib.sha256(pdf_bytes).hexdigest()
-
             informe, _ = InformeResultados.objects.update_or_create(
                 orden=orden,
                 defaults={
@@ -314,16 +373,22 @@ class OrdenLaboratorioViewSet(EstandarRespuestaViewSet):
             )
             nombre_archivo = f"informe_{orden.numero_orden}.pdf"
             informe.archivo_pdf.save(nombre_archivo, ContentFile(pdf_bytes), save=True)
-
-            response = HttpResponse(pdf_bytes, content_type='application/pdf')
-            response['Content-Disposition'] = f'attachment; filename="{nombre_archivo}"'
-            return response
         except Exception as e:
-            logger.error("Error generando PDF para orden %s: %s", pk, str(e))
-            return Response(
-                {'estado': 'error_servidor', 'mensaje': 'Error al generar el PDF del informe.', 'detalle': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            logger.error("Error persistiendo PDF al finalizar orden %s: %s", pk, str(e))
+
+        # Notificar al médico
+        if orden.medico:
+            _crear_notificacion(
+                destinatario=orden.medico,
+                tipo='orden_finalizada',
+                mensaje=f"La orden {orden.numero_orden} ha sido finalizada manualmente.",
+                orden=orden,
             )
+
+        return Response(
+            {'estado': 'exito', 'mensaje': 'Orden finalizada correctamente y reporte generado.'},
+            status=status.HTTP_200_OK
+        )
 
     @action(detail=True, methods=['post'], url_path='admitir')
     def admitir(self, request, pk=None):

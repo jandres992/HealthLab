@@ -110,21 +110,19 @@ def es_anormal(parametro, valor_resultado):
     return anormal, critico
 
 
-def generar_pdf_orden(orden):
+def generar_pdf_orden(orden, preliminar=False):
     """
     Genera el informe PDF de resultados de una OrdenLaboratorio.
     Retorna los bytes del PDF.
+    Diseño profesional para Laboratorio Nivel 2.
     """
     from io import BytesIO
     import datetime
-
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import cm
     from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
-    from reportlab.graphics.barcode import qr
-    from reportlab.graphics.shapes import Drawing
     from reportlab.platypus import (
         SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, HRFlowable
     )
@@ -133,174 +131,113 @@ def generar_pdf_orden(orden):
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
-        leftMargin=2 * cm,
-        rightMargin=2 * cm,
-        topMargin=2 * cm,
-        bottomMargin=2 * cm,
+        leftMargin=1.5 * cm,
+        rightMargin=1.5 * cm,
+        topMargin=1.5 * cm,
+        bottomMargin=1.5 * cm,
     )
     styles = getSampleStyleSheet()
-    titulo_style = ParagraphStyle(
-        'Titulo', parent=styles['Title'], fontSize=16, spaceAfter=4, alignment=TA_CENTER
-    )
-    subtitulo_style = ParagraphStyle(
-        'Subtitulo', parent=styles['Normal'], fontSize=10, alignment=TA_CENTER, spaceAfter=8
-    )
-    seccion_style = ParagraphStyle(
-        'Seccion', parent=styles['Heading3'], fontSize=10, spaceBefore=10, spaceAfter=4,
-        textColor=colors.HexColor('#1a3a5c')
-    )
-    normal_style = styles['Normal']
-    normal_style.fontSize = 9
+    
+    # Estilos personalizados premium
+    h1_style = ParagraphStyle('H1', parent=styles['Heading1'], fontSize=18, alignment=TA_CENTER, textColor=colors.HexColor('#003366'), spaceAfter=2)
+    h2_style = ParagraphStyle('H2', parent=styles['Normal'], fontSize=10, alignment=TA_CENTER, textColor=colors.grey, spaceAfter=10)
+    preliminar_style = ParagraphStyle('Preliminar', parent=styles['Normal'], fontSize=20, alignment=TA_CENTER, textColor=colors.red, spaceAfter=10, fontName='Helvetica-Bold')
+    label_style = ParagraphStyle('Label', parent=styles['Normal'], fontSize=9, fontName='Helvetica-Bold')
+    val_style = ParagraphStyle('Value', parent=styles['Normal'], fontSize=9)
+    sect_header = ParagraphStyle('Sect', parent=styles['Normal'], fontSize=10, fontName='Helvetica-Bold', textColor=colors.white, backColor=colors.HexColor('#003366'), leftIndent=5, rightIndent=5, spaceBefore=10, spaceAfter=5)
 
     story = []
 
-    # ─── Encabezado ───────────────────────────────────────────────────────────
-    story.append(Paragraph("LABORATORIO CLÍNICO HEALTHLAB", titulo_style))
-    story.append(Paragraph("Informe de Resultados de Laboratorio", subtitulo_style))
-    story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#1a3a5c')))
-    story.append(Spacer(1, 0.4 * cm))
+    # ─── CABECERA PRELIMINAR ───
+    if preliminar:
+        story.append(Paragraph("INFORME PRELIMINAR - SIN VALIDEZ LEGAL", preliminar_style))
+        story.append(Spacer(1, 0.5 * cm))
 
-    # QR de verificación (orden y paciente) para lectura desde frontend o app clínica.
-    qr_payload = (
-        f"orden={orden.numero_orden};"
-        f"paciente={orden.paciente.numero_documento if orden.paciente else ''};"
-        f"fecha={orden.fecha_orden.strftime('%Y-%m-%d %H:%M:%S') if orden.fecha_orden else ''}"
-    )
-    qr_widget = qr.QrCodeWidget(qr_payload)
-    bounds = qr_widget.getBounds()
-    size = 2.5 * cm
-    width = bounds[2] - bounds[0]
-    height = bounds[3] - bounds[1]
-    qr_drawing = Drawing(size, size, transform=[size / width, 0, 0, size / height, 0, 0])
-    qr_drawing.add(qr_widget)
-    story.append(Paragraph("Verificación del informe (QR)", ParagraphStyle('QrLbl', parent=styles['Normal'], fontSize=8, alignment=TA_RIGHT)))
-    story.append(qr_drawing)
-    story.append(Spacer(1, 0.2 * cm))
+    # ─── LOGO Y CABECERA ───
+    story.append(Paragraph("HEALTHLAB LIMS - SOLUCIONES CLÍNICAS", h1_style))
+    story.append(Paragraph("Laboratorio Clínico de Alta Complejidad (Nivel 2)", h2_style))
+    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#003366')))
+    story.append(Spacer(1, 0.5 * cm))
 
-    # ─── Datos del paciente ───────────────────────────────────────────────────
+    # ─── INFORMACIÓN DEL PACIENTE ───
     paciente = orden.paciente
-    story.append(Paragraph("DATOS DEL PACIENTE", seccion_style))
-    datos_paciente = [
-        ['Nombre completo:', f"{paciente.primer_nombre} {paciente.segundo_nombre or ''} {paciente.primer_apellido} {paciente.segundo_apellido or ''}".strip()],
-        ['Documento:', f"{paciente.tipo_documento.codigo} {paciente.numero_documento}"],
-        ['Fecha de nacimiento:', str(paciente.fecha_nacimiento)],
-        ['Sexo biológico:', paciente.sexo_biologico.descripcion if paciente.sexo_biologico else 'N/A'],
+    p_data = [
+        [Paragraph("<b>PACIENTE:</b>", label_style), Paragraph(f"{paciente.primer_nombre} {paciente.primer_apellido}".upper(), val_style), 
+         Paragraph("<b>DOCUMENTO:</b>", label_style), Paragraph(f"{paciente.tipo_documento.codigo} {paciente.numero_documento}", val_style)],
+        [Paragraph("<b>EDAD:</b>", label_style), Paragraph(f"{calcular_edad_anios(paciente.fecha_nacimiento)} Años", val_style),
+         Paragraph("<b>SEXO:</b>", label_style), Paragraph(paciente.sexo_biologico.descripcion if paciente.sexo_biologico else 'N/A', val_style)],
+        [Paragraph("<b>FECHA ORDEN:</b>", label_style), Paragraph(orden.fecha_orden.strftime('%d/%m/%Y %H:%M') if orden.fecha_orden else 'N/A', val_style),
+         Paragraph("<b>NÚMERO ORDEN:</b>", label_style), Paragraph(orden.numero_orden, val_style)]
     ]
-    t_paciente = Table(datos_paciente, colWidths=[4 * cm, 13 * cm])
-    t_paciente.setStyle(TableStyle([
-        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('TOPPADDING', (0, 0), (-1, -1), 2),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
-    ]))
-    story.append(t_paciente)
-    story.append(Spacer(1, 0.3 * cm))
-
-    # ─── Datos de la orden ────────────────────────────────────────────────────
-    story.append(Paragraph("DATOS DE LA ORDEN", seccion_style))
-    medico_nombre = 'N/A'
-    if orden.medico:
-        medico_nombre = f"{orden.medico.p_nombre or ''} {orden.medico.p_apellido or ''}".strip() or orden.medico.username
-    datos_orden = [
-        ['N° Orden:', orden.numero_orden],
-        ['Fecha:', str(orden.fecha_orden.strftime('%d/%m/%Y %H:%M') if orden.fecha_orden else 'N/A')],
-        ['Médico solicitante:', medico_nombre],
-        ['CIE-10:', orden.codigo_cie10 or 'N/A'],
-        ['Entidad / Convenio:', f"{orden.entidad_remitente or 'N/A'} / {orden.convenio or 'N/A'}"],
-    ]
-    if orden.observaciones_clinicas:
-        datos_orden.append(['Observaciones:', orden.observaciones_clinicas])
-    t_orden = Table(datos_orden, colWidths=[4 * cm, 13 * cm])
-    t_orden.setStyle(TableStyle([
-        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('TOPPADDING', (0, 0), (-1, -1), 2),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
-    ]))
-    story.append(t_orden)
+    t_pac = Table(p_data, colWidths=[3*cm, 6*cm, 3*cm, 6*cm])
+    t_pac.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
+    story.append(t_pac)
     story.append(Spacer(1, 0.5 * cm))
 
-    # ─── Resultados por examen ─────────────────────────────────────────────────
-    story.append(Paragraph("RESULTADOS", seccion_style))
-    story.append(HRFlowable(width="100%", thickness=0.5, color=colors.grey))
-    story.append(Spacer(1, 0.2 * cm))
+    # ─── INFORMACIÓN CLÍNICA ───
+    c_data = [
+        [Paragraph("<b>MÉDICO:</b>", label_style), Paragraph(f"{orden.medico.p_nombre} {orden.medico.p_apellido}" if orden.medico else "PARTICULAR", val_style)],
+        [Paragraph("<b>ENTIDAD:</b>", label_style), Paragraph(orden.entidad_remitente or "PARTICULAR", val_style)],
+        [Paragraph("<b>DIAGNÓSTICO:</b>", label_style), Paragraph(f"{orden.codigo_cie10 or 'N/A'}", val_style)]
+    ]
+    t_clin = Table(c_data, colWidths=[3*cm, 15*cm])
+    story.append(t_clin)
+    story.append(Spacer(1, 0.5 * cm))
 
-    examenes = orden.examenes_solicitados.prefetch_related(
-        'resultados__parametro'
-    ).select_related('cups').all()
-
-    for examen in examenes:
-        story.append(Paragraph(
-            f"<b>{examen.cups.codigo_cups}</b> — {examen.cups.descripcion} "
-            f"<font size='8' color='grey'>[{examen.estado_examen.nombre}]</font>",
-            styles['Normal']
-        ))
-        resultados = list(examen.resultados.all())
-        if resultados:
-            cabecera = ['Parámetro', 'Resultado', 'Unidades', 'Rango Ref.', 'Pánico', 'Estado']
-            filas = [cabecera]
-            indices_anormales = []
-            for i, r in enumerate(resultados, start=1):
+    # ─── RESULTADOS AGRUPADOS ───
+    story.append(Paragraph(" REPORTE DETALLADO DE RESULTADOS", sect_header))
+    
+    if preliminar:
+        # En preliminar mostramos todo lo que tenga al menos un resultado
+        examenes = orden.examenes_solicitados.filter(resultados__isnull=False).distinct().prefetch_related('resultados__parametro')
+    else:
+        examenes = orden.examenes_solicitados.filter(estado_examen__nombre='Validado').prefetch_related('resultados__parametro')
+    
+    if not examenes.exists():
+        story.append(Paragraph("<i>No hay estudios validados para mostrar en este informe.</i>", val_style))
+    else:
+        for ex in examenes:
+            status_text = f" [{ex.estado_examen.nombre}]" if preliminar else ""
+            story.append(Spacer(1, 0.3*cm))
+            story.append(Paragraph(f"ESTUDIO: <b>{ex.cups.descripcion.upper()}</b> {status_text}", label_style))
+            story.append(Spacer(1, 0.2*cm))
+            
+            res_data = [['PARÁMETRO', 'RESULTADO', 'UNIDADES', 'RANGOS DE REFERENCIA']]
+            for r in ex.resultados.all():
                 p = r.parametro
-                rango = 'N/A'
-                if p.rango_referencia_minimo is not None and p.rango_referencia_maximo is not None:
-                    rango = f"{p.rango_referencia_minimo} – {p.rango_referencia_maximo}"
-                elif p.rango_texto:
-                    rango = p.rango_texto
-                panico = 'N/A'
-                if p.rango_panico_minimo is not None or p.rango_panico_maximo is not None:
-                    panico = f"{p.rango_panico_minimo or '—'} / {p.rango_panico_maximo or '—'}"
-                estado_txt = 'ANORMAL' if r.es_anormal else 'Normal'
-                filas.append([
-                    p.nombre_parametro,
-                    r.valor_resultado,
-                    p.unidades_medida or '',
-                    rango,
-                    panico,
-                    estado_txt,
-                ])
+                r_min = p.rango_referencia_minimo if p.rango_referencia_minimo is not None else ""
+                r_max = p.rango_referencia_maximo if p.rango_referencia_maximo is not None else ""
+                rango_str = f"{r_min} - {r_max}" if r_min or r_max else (p.rango_texto or "N/A")
+                
+                # Resaltar anormales
+                val_display = r.valor_resultado
                 if r.es_anormal:
-                    indices_anormales.append(i)
-                if r.comentario_bacteriologo:
-                    filas.append(['  Obs.:', r.comentario_bacteriologo, '', '', '', ''])
-
-            col_widths = [4.5 * cm, 2.5 * cm, 2 * cm, 3.5 * cm, 2.5 * cm, 2 * cm]
-            t_res = Table(filas, colWidths=col_widths)
-            t_res_style = [
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a3a5c')),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, -1), 8),
-                ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
-                ('ALIGN', (0, 0), (0, -1), 'LEFT'),
-                ('GRID', (0, 0), (-1, -1), 0.25, colors.HexColor('#cccccc')),
-                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f5f5f5')]),
-                ('TOPPADDING', (0, 0), (-1, -1), 3),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
-            ]
-            for idx in indices_anormales:
-                t_res_style.append(('TEXTCOLOR', (1, idx), (1, idx), colors.red))
-                t_res_style.append(('FONTNAME', (1, idx), (1, idx), 'Helvetica-Bold'))
-                t_res_style.append(('TEXTCOLOR', (5, idx), (5, idx), colors.red))
-            t_res.setStyle(TableStyle(t_res_style))
+                    val_display = f"<b>{val_display} *</b>"
+                
+                res_data.append([p.nombre_parametro, val_display, p.unidades_medida or "", rango_str])
+            
+            t_res = Table(res_data, colWidths=[6*cm, 3*cm, 3*cm, 6*cm])
+            t_res.setStyle(TableStyle([
+                ('FONTSIZE', (0,0), (-1,-1), 8),
+                ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f2f2f2')),
+                ('LINEBELOW', (0,0), (-1,0), 1, colors.black),
+                ('ALIGN', (1,0), (1,-1), 'CENTER'),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+                ('TOPPADDING', (0,0), (-1,-1), 4),
+            ]))
             story.append(t_res)
-        else:
-            story.append(Paragraph("<i>Sin resultados registrados.</i>", styles['Normal']))
-        story.append(Spacer(1, 0.4 * cm))
+            if ex.motivo_rechazo:
+                story.append(Paragraph(f"Nota: {ex.motivo_rechazo}", val_style))
 
-    # ─── Área de firmado ──────────────────────────────────────────────────────
-    story.append(Spacer(1, 1 * cm))
-    story.append(HRFlowable(width="100%", thickness=0.5, color=colors.grey))
-    firma_style = ParagraphStyle('Firma', parent=styles['Normal'], fontSize=8, alignment=TA_CENTER)
-    story.append(Spacer(1, 0.3 * cm))
-    story.append(Paragraph("__________________________________", firma_style))
-    story.append(Paragraph("Firma del Bacteriólogo Responsable", firma_style))
-    story.append(Spacer(1, 0.5 * cm))
-    story.append(Paragraph(
-        f"Documento generado el {datetime.datetime.now().strftime('%d/%m/%Y a las %H:%M')}. "
-        "Este informe es de carácter confidencial.",
-        ParagraphStyle('Pie', parent=styles['Normal'], fontSize=7, textColor=colors.grey, alignment=TA_CENTER)
-    ))
+    # ─── PIE DE PÁGINA ───
+    story.append(Spacer(1, 2*cm))
+    if not preliminar:
+        story.append(HRFlowable(width="30%", thickness=1, color=colors.black, alignment=TA_LEFT))
+        story.append(Paragraph("Firma Electrónica - Bacteriólogo Responsable", val_style))
+    else:
+        story.append(Paragraph("<b>DOCUMENTO PRELIMINAR - PENDIENTE DE VALIDACIÓN FINAL</b>", ParagraphStyle('Warn', parent=val_style, textColor=colors.red)))
+        
+    story.append(Paragraph(f"Informe generado el {datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", h2_style))
 
     doc.build(story)
     return buffer.getvalue()

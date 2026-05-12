@@ -115,7 +115,14 @@ class PacienteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Paciente
-        fields = '__all__'
+        fields = [
+            'id', 'tipo_documento', 'numero_documento', 'primer_nombre', 
+            'segundo_nombre', 'primer_apellido', 'segundo_apellido', 
+            'fecha_nacimiento', 'sexo_biologico', 'telefono', 
+            'correo_electronico', 'municipio_residencia', 
+            'departamento_residencia', 'regimen_salud', 
+            'consentimiento_habeas_data', 'activo', 'fecha_creacion'
+        ]
         read_only_fields = ('id', 'fecha_creacion')
 
 
@@ -131,7 +138,13 @@ class OrdenLaboratorioSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = OrdenLaboratorio
-        fields = '__all__'
+        fields = [
+            'id', 'paciente', 'paciente_nombre', 'medico', 'medico_nombre',
+            'numero_orden', 'fecha_orden', 'fecha_admision', 'usuario_admite',
+            'observaciones_clinicas', 'codigo_cie10', 'entidad_remitente',
+            'convenio', 'finalidad_consulta', 'causa_externa', 
+            'tipo_diagnostico', 'estado_general'
+        ]
         read_only_fields = ('id', 'fecha_orden', 'paciente_nombre', 'medico_nombre')
 
     def get_paciente_nombre(self, obj):
@@ -204,6 +217,8 @@ class ExamenSolicitadoSerializer(serializers.ModelSerializer):
     )
     estado_examen_nombre = serializers.SerializerMethodField(read_only=True)
     validado_por_username = serializers.SerializerMethodField(read_only=True)
+    orden_numero = serializers.ReadOnlyField(source='orden.numero_orden')
+    codigo_barras = serializers.ReadOnlyField(source='orden.muestras_fisicas.first.codigo_barras')
 
     class Meta:
         model = ExamenSolicitado
@@ -215,6 +230,15 @@ class ExamenSolicitadoSerializer(serializers.ModelSerializer):
 
     def get_validado_por_username(self, obj):
         return obj.validado_por.username if obj.validado_por else None
+
+    cups_descripcion = serializers.ReadOnlyField(source='cups.descripcion')
+    paciente_nombre = serializers.SerializerMethodField()
+
+    def get_paciente_nombre(self, obj):
+        p = obj.orden.paciente
+        return f"{p.primer_nombre} {p.primer_apellido}"
+
+    paciente_documento = serializers.ReadOnlyField(source='orden.paciente.numero_documento')
 
     def create(self, validated_data):
         if not validated_data.get('estado_examen'):
@@ -236,6 +260,9 @@ class ResultadoAnalitoSerializer(serializers.ModelSerializer):
         model = ResultadoAnalito
         fields = '__all__'
         read_only_fields = ('id', 'fecha_procesamiento', 'es_anormal', 'es_critico')
+
+    parametro_nombre = serializers.ReadOnlyField(source='parametro.nombre_parametro')
+    unidades = serializers.ReadOnlyField(source='parametro.unidades_medida')
 
     def _calcular_flags(self, parametro, valor_resultado, examen_solicitado=None):
         """

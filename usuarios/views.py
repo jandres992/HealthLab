@@ -32,6 +32,13 @@ class MunicipioViewSet(viewsets.ModelViewSet):
     queryset = Municipio.objects.all()
     serializer_class = MunicipioSerializer
 
+    def get_queryset(self):
+        queryset = Municipio.objects.all()
+        departamento_id = self.request.query_params.get('departamento')
+        if departamento_id:
+            queryset = queryset.filter(departamento_id=departamento_id)
+        return queryset
+
 class UsuarioViewSet(viewsets.ModelViewSet):
     queryset = Usuario.objects.all()
     serializer_class = UsuarioSerializer
