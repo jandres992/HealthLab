@@ -1,218 +1,81 @@
-# HealthLab Backend (Django + DRF)
+# Sistema LIMS HealthLab - Documentación Integral
 
-Backend para gestion de laboratorio clinico (LIMS) con flujo operativo de fases 1 a 6:
+El ecosistema **HealthLab** es una plataforma integral (LIMS - *Laboratory Information Management System*) diseñada para gestionar todo el flujo operativo de un laboratorio clínico. El sistema centraliza la administración de datos, asegurando la trazabilidad desde que un paciente ingresa al laboratorio hasta la entrega final de sus resultados.
 
-1. Configuracion de catalogos y equipos
-2. Registro de pacientes y ordenes
-3. Toma y trazabilidad de muestras
-4. Integracion serial de equipos
-5. Validacion post-analitica
-6. Informes y notificaciones
+> **Nota aclaratoria sobre la tecnología frontend**: Aunque se hizo mención a "Vue", el código real del proyecto cliente (`HealthLabMobile`) está construido utilizando **React Native y Expo (TypeScript)**. Esta elección de tecnología permite que el mismo código fuente se ejecute como Aplicación Móvil (Android/iOS) y como Aplicación Web desde el navegador.
 
-## Stack tecnico
+---
 
-- Python 3.12+
-- Django 6.0.3
-- Django REST Framework 3.16.1
-- JWT (SimpleJWT)
-- drf-spectacular (OpenAPI / Swagger)
-- SQLite (desarrollo)
-- ReportLab (generacion de PDF)
+## 🔬 ¿Qué hace la aplicación completa?
 
-## Estructura principal
+El sistema unifica a médicos, bacteriólogos, técnicos y administradores bajo una sola plataforma que automatiza y asegura **6 fases operativas principales**:
 
-- HealthLab/: configuracion global del proyecto
-- laboratorio/: dominio clinico (ordenes, muestras, resultados, informes)
-- usuarios/: autenticacion, perfiles, tipos de usuario, permisos
-- db.sqlite3: base de datos local
-- manage.py: comandos Django
+1. **Configuración y Catálogos**: Parametrización de los exámenes médicos (catálogos CUPS), parámetros de los equipos médicos y datos geopolíticos (Divipola).
+2. **Registro y Admisión**: Creación de pacientes en el sistema y generación de órdenes de exámenes de laboratorio.
+3. **Trazabilidad de Muestras**: Los técnicos en enfermería registran la toma de las muestras, y luego en el laboratorio central estas son recibidas, procesadas o rechazadas con justificación.
+4. **Gestión de Resultados**: Integración de los resultados de los exámenes. El sistema está preparado para la lectura serial desde máquinas automatizadas, así como para la carga manual (Plan de contingencia).
+5. **Validación Post-analítica**: Los bacteriólogos revisan, validan y aprueban o rechazan los resultados técnicos antes de su liberación.
+6. **Informes y Reportes**: Generación automatizada de reportes médicos en formato PDF (preliminares y definitivos) y un sistema interno de notificaciones y alertas.
 
-## Dependencias
+El proyecto está dividido en dos partes principales: el **Backend (API)** y el **Frontend (Cliente Multipantalla)**.
 
-Dependencias actuales detectadas:
+---
 
-- asgiref==3.11.1
-- attrs==25.4.0
-- Django==6.0.3
-- django-cors-headers==4.9.0
-- djangorestframework==3.16.1
-- djangorestframework_simplejwt==5.5.1
-- drf-spectacular==0.29.0
-- inflection==0.5.1
-- jsonschema==4.26.0
-- jsonschema-specifications==2025.9.1
-- pillow==12.1.1
-- PyJWT==2.11.0
-- PyYAML==6.0.3
-- referencing==0.37.0
-- reportlab==4.4.10
-- rpds-py==0.30.0
-- sqlparse==0.5.5
-- tzdata==2025.3
-- uritemplate==4.2.0
+## ⚙️ 1. Backend: Núcleo y API (`/home/andres/aplicaciones/HealthLab`)
 
-## Instalacion y ejecucion
+El backend actúa como el motor central del sistema. Provee una API RESTful robusta y segura encargada de manejar la base de datos, la lógica de negocio clínica, la generación de reportes y la seguridad.
 
-### 1) Crear y activar entorno virtual
+### Stack Tecnológico
+* **Lenguaje y Framework**: Python 3.12+ con Django 6.0 y Django REST Framework (DRF).
+* **Autenticación**: JSON Web Tokens (JWT) utilizando `djangorestframework_simplejwt` con control estricto de sesiones (Token Blacklist).
+* **Documentación API**: OpenAPI 3.0 / Swagger UI (vía `drf-spectacular`).
+* **Generación de Archivos**: `reportlab` para la construcción nativa y dinámica de informes de laboratorio en PDF.
 
-Linux/macOS:
+### Módulos Principales
+* **Módulo `usuarios`**: Encargado del control de acceso basado en roles (RBAC). Soporta roles como Administrador, Médico, Bacteriólogo y Técnico de Enfermería. También registra "Dispositivos de confianza".
+* **Módulo `laboratorio`**: Contiene la lógica clínica. Gestiona desde los catálogos CUPS, pasando por órdenes, muestras y exámenes, hasta la lectura serial de máquinas y generación de PDF.
 
+---
+
+## 📱 2. Frontend: App Móvil y Web (`/home/andres/aplicaciones/HealthLabMobile`)
+
+El frontend es la interfaz gráfica que utilizan los profesionales del laboratorio. Se conecta exclusivamente al Backend a través de su API REST.
+
+### Stack Tecnológico
+* **Framework**: React Native con **Expo**, lo que permite compilar la app tanto para móviles (Android/iOS) como para Web Browser (React Native Web).
+* **Lenguaje**: TypeScript para asegurar el tipado fuerte y confiabilidad del código.
+* **Manejo de Estado**: **Zustand** (con persistencia local en `AsyncStorage`) para manejar la sesión global, perfil del usuario y flujos clínicos locales.
+* **Navegación**: React Navigation (Bottom Tabs y Stack Navigators)
+
+### Características Clave
+* **Autenticación Persistente**: Los tokens de seguridad (JWT) se guardan localmente. El sistema intercepta errores `401 Unauthorized` de la API e intenta renovar (refresh) el token en segundo plano para evitar interrumpir al usuario.
+* **Guardias de Navegación (RBAC)**: La interfaz gráfica se adapta al usuario. Un Técnico de Enfermería verá opciones diferentes a un Bacteriólogo; las vistas no autorizadas son bloqueadas.
+* **Soporte de Contingencia**: La aplicación está diseñada para funcionar ágilmente. Posee colas para operaciones offline (guardado temporal por pérdida de red) e ingreso manual de datos.
+
+---
+
+## 🚀 Despliegue y Ejecución Rápida
+
+Para ejecutar la aplicación de forma local, es necesario iniciar ambos sistemas de manera paralela.
+
+### 1. Iniciar el Backend (Django)
 ```bash
-python3 -m venv .venv
+cd /home/andres/aplicaciones/HealthLab
+# Activar entorno virtual (Linux/macOS)
 source .venv/bin/activate
-```
-
-### 2) Instalar dependencias
-
-```bash
+# Instalar dependencias (si es necesario)
 pip install -r requirements.txt
+# Levantar el servidor en el puerto 8000
+python manage.py runserver 0.0.0.0:8000
 ```
+> La documentación interactiva (Swagger) de la API estará disponible en: `http://127.0.0.1:8000/api/docs/`
 
-Nota: si tu entorno presenta error de codificacion con requirements.txt, conviertelo a UTF-8 y reintenta.
-
-### 3) Migraciones
-
+### 2. Iniciar el Frontend (React Native / Expo)
 ```bash
-python manage.py makemigrations
-python manage.py migrate
+cd /home/andres/aplicaciones/HealthLabMobile
+# Instalar dependencias de Node
+npm install
+# Levantar el entorno de Expo
+npx expo start
 ```
-
-### 4) Cargar datos de prueba
-
-```bash
-python manage.py seed_test_data
-```
-
-### 5) Levantar servidor
-
-```bash
-python manage.py runserver
-```
-
-Servidor local:
-
-- http://127.0.0.1:8000/
-
-## Configuracion relevante
-
-Valores principales en settings:
-
-- DEBUG = True
-- ALLOWED_HOSTS = ["*"]
-- CORS_ALLOW_ALL_ORIGINS = True (solo desarrollo)
-- AUTH_USER_MODEL = usuarios.Usuario
-- DB por defecto: SQLite (db.sqlite3)
-- Zona horaria: America/Bogota
-- Idioma: es-CO
-- JWT access token: 60 minutos
-- JWT refresh token: 7 dias
-
-## Autenticacion
-
-Login:
-
-- POST /usr/login/
-
-Refresh:
-
-- POST /usr/token/refresh/
-
-Header requerido:
-
-```http
-Authorization: Bearer <token>
-Content-Type: application/json
-```
-
-## Documentacion de API
-
-- Swagger UI: /api/docs/
-- OpenAPI schema: /api/schema/
-- ReDoc: /api/redoc/
-
-## Rutas base
-
-- /api/v1/ -> endpoints del modulo laboratorio
-- /usr/ -> endpoints del modulo usuarios
-- /admin/ -> panel de administracion Django
-
-## Modulo laboratorio (resumen)
-
-Recursos principales:
-
-- catalogo-cups
-- parametros
-- equipos
-- pacientes
-- ordenes
-- muestras
-- examenes-solicitados
-- lecturas-serial
-- resultados
-- informes
-- notificaciones
-
-Acciones destacadas:
-
-- ordenes/{id}/admitir/
-- ordenes/{id}/reporte-pdf/
-- muestras/buscar/
-- muestras/{id}/recibir-laboratorio/
-- muestras/{id}/rechazar/
-- examenes-solicitados/{id}/aprobar/
-- examenes-solicitados/{id}/rechazar/
-- lecturas-serial/{id}/procesar/
-- notificaciones/{id}/marcar-leida/
-- notificaciones/marcar-todas-leidas/
-
-## Modulo usuarios (resumen)
-
-Recursos:
-
-- tipos-id
-- sexos
-- departamentos
-- municipios
-- usuarios
-- tipos-usuario
-- permisos
-- usuarios-permisos
-- dispositivos-confianza
-
-## Roles de negocio vigentes
-
-Modelo simplificado actual:
-
-- Medico
-- Bacteriologo
-- Administrador
-- Tecnico de Enfermeria (toma y registro de muestras)
-
-## Seguridad actual
-
-- Existe modelo de roles y permisos en base de datos.
-- El usuario admin tiene todos los permisos vigentes asignados.
-- Pendiente recomendado: enforcement estricto de permisos por endpoint usando permission_classes en DRF.
-
-## Comandos utiles
-
-```bash
-python manage.py check
-python manage.py createsuperuser
-python manage.py shell
-python manage.py seed_test_data
-```
-
-## Estado del proyecto
-
-Backend funcional para desarrollo local con:
-
-- modelos clinicos y de usuarios operativos
-- JWT habilitado
-- documentacion OpenAPI habilitada
-- generacion de informes PDF
-- semilla de datos para pruebas
-
-## Licencia
-
-Uso academico / interno (ajustar segun politica del equipo).
+> Desde la consola de Expo puedes presionar **'w'** para abrir la versión Web, **'a'** para Android, o escanear el código QR con la app **Expo Go** en un dispositivo físico. Asegúrate de configurar la variable `EXPO_PUBLIC_API_URL` en el archivo `.env` apuntando a la IP local de tu Backend.
