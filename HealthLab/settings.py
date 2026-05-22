@@ -32,6 +32,10 @@ ALLOWED_HOSTS = ['*']
 CORS_ALLOW_ALL_ORIGINS = True          # Solo para desarrollo local
 CORS_ALLOW_CREDENTIALS = True
 
+CSRF_TRUSTED_ORIGINS = [
+    'https://healthlab-sn84.onrender.com',
+]
+
 
 # Application definition
 
