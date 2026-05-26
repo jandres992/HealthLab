@@ -1,81 +1,122 @@
-# Sistema LIMS HealthLab - Documentación Integral
+# Sistema LIMS HealthLab - Documentación General del Proyecto
 
-El ecosistema **HealthLab** es una plataforma integral (LIMS - *Laboratory Information Management System*) diseñada para gestionar todo el flujo operativo de un laboratorio clínico. El sistema centraliza la administración de datos, asegurando la trazabilidad desde que un paciente ingresa al laboratorio hasta la entrega final de sus resultados.
+Esta es la documentación oficial del proyecto **HealthLab**, abarcando tanto el sistema Backend (Django) como la Aplicación Móvil (React Native/Expo). Este documento detalla el cumplimiento de todos los requisitos propuestos para la entrega final del proyecto.
 
-> **Nota aclaratoria sobre la tecnología frontend**: Aunque se hizo mención a "Vue", el código real del proyecto cliente (`HealthLabMobile`) está construido utilizando **React Native y Expo (TypeScript)**. Esta elección de tecnología permite que el mismo código fuente se ejecute como Aplicación Móvil (Android/iOS) y como Aplicación Web desde el navegador.
+## 1. Componentes de la Actividad
 
----
+### Problema Planteado Inicialmente
+En los entornos clínicos y laboratorios modernos, la gestión manual de órdenes, muestras y resultados médicos genera cuellos de botella operativos, incrementa el riesgo de errores en la transcripción de datos y dificulta la trazabilidad completa del paciente. Existe la necesidad de un sistema digital integral que gestione el flujo operativo de un laboratorio clínico de manera eficiente, segura y alineada con las normativas de salud vigentes (como los catálogos CUPS y las bases de datos de Divipola en Colombia).
 
-## 🔬 ¿Qué hace la aplicación completa?
+### Objetivo General del Proyecto
+Desarrollar e implementar un Sistema de Gestión de Información de Laboratorio (LIMS) completo y funcional, compuesto por una API Backend robusta en la nube y una aplicación móvil cliente. El objetivo es facilitar la interacción en tiempo real del personal clínico (Médicos, Bacteriólogos, Técnicos, Administradores) con los datos médicos, automatizando y asegurando las fases pre-analíticas, analíticas y post-analíticas del laboratorio.
 
-El sistema unifica a médicos, bacteriólogos, técnicos y administradores bajo una sola plataforma que automatiza y asegura **6 fases operativas principales**:
+### Funcionalidades Implementadas
+- Gestión, importación y validación de catálogos clínicos (Códigos CUPS, Parámetros biomédicos).
+- Registro y admisión de pacientes integrando bases de datos de ubicación (Divipola).
+- Creación de órdenes de laboratorio mediante selección inteligente de exámenes.
+- Trazabilidad y validación física de recolección de muestras.
+- Lectura de resultados (tanto contingencia manual como capacidad para lectura serial automatizada).
+- Proceso de validación post-analítica de resultados por bacteriólogos, con sistema de alertas de pánico.
+- Generación de reportes clínicos estandarizados en PDF.
 
-1. **Configuración y Catálogos**: Parametrización de los exámenes médicos (catálogos CUPS), parámetros de los equipos médicos y datos geopolíticos (Divipola).
-2. **Registro y Admisión**: Creación de pacientes en el sistema y generación de órdenes de exámenes de laboratorio.
-3. **Trazabilidad de Muestras**: Los técnicos en enfermería registran la toma de las muestras, y luego en el laboratorio central estas son recibidas, procesadas o rechazadas con justificación.
-4. **Gestión de Resultados**: Integración de los resultados de los exámenes. El sistema está preparado para la lectura serial desde máquinas automatizadas, así como para la carga manual (Plan de contingencia).
-5. **Validación Post-analítica**: Los bacteriólogos revisan, validan y aprueban o rechazan los resultados técnicos antes de su liberación.
-6. **Informes y Reportes**: Generación automatizada de reportes médicos en formato PDF (preliminares y definitivos) y un sistema interno de notificaciones y alertas.
-
-El proyecto está dividido en dos partes principales: el **Backend (API)** y el **Frontend (Cliente Multipantalla)**.
-
----
-
-## ⚙️ 1. Backend: Núcleo y API (`/home/andres/aplicaciones/HealthLab`)
-
-El backend actúa como el motor central del sistema. Provee una API RESTful robusta y segura encargada de manejar la base de datos, la lógica de negocio clínica, la generación de reportes y la seguridad.
-
-### Stack Tecnológico
-* **Lenguaje y Framework**: Python 3.12+ con Django 6.0 y Django REST Framework (DRF).
-* **Autenticación**: JSON Web Tokens (JWT) utilizando `djangorestframework_simplejwt` con control estricto de sesiones (Token Blacklist).
-* **Documentación API**: OpenAPI 3.0 / Swagger UI (vía `drf-spectacular`).
-* **Generación de Archivos**: `reportlab` para la construcción nativa y dinámica de informes de laboratorio en PDF.
-
-### Módulos Principales
-* **Módulo `usuarios`**: Encargado del control de acceso basado en roles (RBAC). Soporta roles como Administrador, Médico, Bacteriólogo y Técnico de Enfermería. También registra "Dispositivos de confianza".
-* **Módulo `laboratorio`**: Contiene la lógica clínica. Gestiona desde los catálogos CUPS, pasando por órdenes, muestras y exámenes, hasta la lectura serial de máquinas y generación de PDF.
+### Justificación
+La aplicación desarrollada responde a la necesidad identificada al centralizar el ciclo completo de procesamiento en una única plataforma digital. Mediante la aplicación móvil de HealthLab, el personal de enfermería puede asegurar la trazabilidad de las muestras in-situ, mientras los médicos y bacteriólogos validan y revisan los resultados con una reducción crítica de latencia y error humano. La arquitectura nativa móvil sobre una API REST garantiza portabilidad, escalabilidad y seguridad.
 
 ---
 
-## 📱 2. Frontend: App Móvil y Web (`/home/andres/aplicaciones/HealthLabMobile`)
+## 2. Implementación Final de la Aplicación Móvil y Backend
 
-El frontend es la interfaz gráfica que utilizan los profesionales del laboratorio. Se conecta exclusivamente al Backend a través de su API REST.
-
-### Stack Tecnológico
-* **Framework**: React Native con **Expo**, lo que permite compilar la app tanto para móviles (Android/iOS) como para Web Browser (React Native Web).
-* **Lenguaje**: TypeScript para asegurar el tipado fuerte y confiabilidad del código.
-* **Manejo de Estado**: **Zustand** (con persistencia local en `AsyncStorage`) para manejar la sesión global, perfil del usuario y flujos clínicos locales.
-* **Navegación**: React Navigation (Bottom Tabs y Stack Navigators)
-
-### Características Clave
-* **Autenticación Persistente**: Los tokens de seguridad (JWT) se guardan localmente. El sistema intercepta errores `401 Unauthorized` de la API e intenta renovar (refresh) el token en segundo plano para evitar interrumpir al usuario.
-* **Guardias de Navegación (RBAC)**: La interfaz gráfica se adapta al usuario. Un Técnico de Enfermería verá opciones diferentes a un Bacteriólogo; las vistas no autorizadas son bloqueadas.
-* **Soporte de Contingencia**: La aplicación está diseñada para funcionar ágilmente. Posee colas para operaciones offline (guardado temporal por pérdida de red) e ingreso manual de datos.
+El proyecto incluye un sistema funcional en ambos extremos:
+- **Tecnología Backend**: API RESTful desarrollada en Python usando **Django** y **Django REST Framework (DRF)**.
+- **Tecnología Cliente**: Aplicación móvil desarrollada en **Expo con React Native** (y TypeScript).
+- **Navegación Cliente**: Estructurada de manera integral usando `React Navigation` (Stack y Tabs).
+- **Flujos Base Implementados**:
+  - Registro de nuevos usuarios y pacientes.
+  - Inicio de sesión protegido con validación de credenciales.
+  - Acceso a funcionalidades principales divididas por módulos interactivos.
+  - Cierre de sesión seguro y limpieza de entorno.
 
 ---
 
-## 🚀 Despliegue y Ejecución Rápida
+## 3. Diseño de Interfaz y Experiencia de Usuario (UI/UX)
 
-Para ejecutar la aplicación de forma local, es necesario iniciar ambos sistemas de manera paralela.
+- **Consistencia Visual**: Se implementó un diseño limpio y moderno con soporte para un sistema de **Theming (Dark/Light Mode)**. Consistencia en el uso de tipografía, paletas de colores semánticas, distribución espacial e íconos intuitivos.
+- **Retroalimentación Visual**: La aplicación provee feedback constante al usuario mediante indicadores de carga (Spinners), notificaciones Toast de éxito, e interfaces descriptivas ante estados de error, guiadas por las respuestas del Backend.
 
-### 1. Iniciar el Backend (Django)
+---
+
+## 4. Seguridad de la Aplicación
+
+- **Autenticación (JWT)**: Intercambio riguroso de JSON Web Tokens. El backend genera, valida y revoca los tokens utilizando `djangorestframework_simplejwt` con `token_blacklist`.
+- **Control de Acceso (RBAC y GUARDS)**: Implementación de Control de Acceso Basado en Roles (Médico, Bacteriólogo, Técnico de Enfermería, Administrador). Las vistas en el frontend están protegidas y los endpoints del backend utilizan decoradores y clases de permisos de DRF para rechazar acciones no autorizadas.
+- **Manejo de Errores HTTP**: Respuestas semánticas emitidas por el Backend e interceptadas por el Frontend:
+  - `401 Unauthorized`: Token inválido o expirado. Gatilla renovación.
+  - `403 Forbidden`: Violación de políticas RBAC.
+  - `404 Not Found`: Recursos inexistentes.
+  - `422/400 Bad Request`: Errores de validación de modelos, capturados visualmente en los formularios móviles.
+  - `500 Server Error`: Fallo interno del servidor controlado.
+
+---
+
+## 5. Gestión de Estado y Persistencia de Sesión
+
+- **Manejo del Estado y Persistencia**: El frontend utiliza **Zustand** y `AsyncStorage` para persistir localmente el Token de acceso y Refresh token.
+- **Administración de Sesión**: Renovación de sesión automática en segundo plano mediante interceptores de Axios y rutas del Backend específicas para re-expedición de JWT.
+
+---
+
+## 6. Consumo de Datos y Paginación
+
+- **Integración Backend**: Consumo estructurado a la API central en Django. El Backend expone rutas bajo `/api/v1/`.
+- **Presentación de Datos**: Listas optimizadas, formularios con selectores dinámicos y generación de archivos binarios (PDF de reportes) entregados directamente al móvil.
+- **Paginación Inteligente**: Todos los listados de la API de Django usan `LimitOffsetPagination`. El cliente los consume progresivamente para optimizar uso de memoria (Scroll Infinito).
+
+---
+
+## 7. Documentación Técnica de la Aplicación (Estructura)
+
+- **Uso de Repositorios**: Control de versiones mediante Git (GitHub).
+- **Criterio de Separación (Backend)**: 
+  - Organización modular mediante apps de Django (`usuarios`, `laboratorio`).
+  - Separación de Modelos, Vistas (Views/ViewSets), Serializadores (Serializers) y URLs.
+- **Criterio de Separación (Frontend)**:
+  - Vistas, componentes, servicios de red, tiendas de estado y navegación lógicamente separados.
+- **Reuso de Componentes**: DRY (Don't Repeat Yourself) implementado en ambos entornos.
+- **Estrategias de Código**: Python PEP 8 en backend; TypeScript y convenciones React en Frontend. Endpoints documentados vía Swagger/OpenAPI.
+
+---
+
+## Ejecución Local del Proyecto Backend (Django)
+
 ```bash
-cd /home/andres/aplicaciones/HealthLab
+cd HealthLab
+
 # Activar entorno virtual (Linux/macOS)
 source .venv/bin/activate
-# Instalar dependencias (si es necesario)
+
+# Instalar dependencias
 pip install -r requirements.txt
+
+# Aplicar migraciones base de datos
+python manage.py migrate
+
 # Levantar el servidor en el puerto 8000
 python manage.py runserver 0.0.0.0:8000
 ```
 > La documentación interactiva (Swagger) de la API estará disponible en: `http://127.0.0.1:8000/api/docs/`
 
-### 2. Iniciar el Frontend (React Native / Expo)
-```bash
-cd /home/andres/aplicaciones/HealthLabMobile
-# Instalar dependencias de Node
-npm install
-# Levantar el entorno de Expo
-npx expo start
-```
-> Desde la consola de Expo puedes presionar **'w'** para abrir la versión Web, **'a'** para Android, o escanear el código QR con la app **Expo Go** en un dispositivo físico. Asegúrate de configurar la variable `EXPO_PUBLIC_API_URL` en el archivo `.env` apuntando a la IP local de tu Backend.
+## 🚀 Despliegue en Producción
+
+Para llevar la API del Backend a un entorno productivo (ej. AWS, DigitalOcean, Heroku), debes seguir estos pasos:
+
+1. **Variables de Entorno**: Cambiar `DEBUG = False` en `settings.py` y configurar `ALLOWED_HOSTS` con la IP o dominio de tu servidor.
+2. **Base de Datos**: Migrar de SQLite (desarrollo) a PostgreSQL de manera definitiva, ajustando la variable `DATABASES`.
+3. **Servidor WSGI**: Servir la aplicación utilizando **Gunicorn** detrás de un proxy inverso como **Nginx**:
+   ```bash
+   pip install gunicorn
+   gunicorn HealthLab.wsgi:application --bind 0.0.0.0:8000
+   ```
+4. **Archivos Estáticos**: Ejecutar el comando para recolectar los estáticos del panel de admin.
+   ```bash
+   python manage.py collectstatic
+   ```
