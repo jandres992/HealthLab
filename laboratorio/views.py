@@ -18,6 +18,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 
+from HealthLab.idempotencia import idempotente
 from usuarios import auditoria
 from usuarios.permissions import PermisoPorAccion
 
@@ -234,6 +235,7 @@ class OrdenLaboratorioViewSet(EstandarRespuestaViewSet):
     filterset_fields = {'estado_general__nombre': ['exact'], 'paciente': ['exact'], 'medico': ['exact'],
                         'fecha_orden': ['gte', 'lte']}
 
+    @idempotente
     def create(self, request, *args, **kwargs):
         serializer = OrdenCrearSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -259,6 +261,7 @@ class OrdenLaboratorioViewSet(EstandarRespuestaViewSet):
         return exito('Orden actualizada.', OrdenLaboratorioSerializer(self.get_queryset().get(pk=orden.pk)).data)
 
     @action(detail=True, methods=['post'])
+    @idempotente
     def admitir(self, request, pk=None):
         orden = svc_ordenes.admitir_orden(request.user, pk, request=request)
         return exito('Admisión registrada correctamente.', fecha_admision=orden.fecha_admision.isoformat())
@@ -343,6 +346,7 @@ class MuestraFisicaViewSet(EstandarRespuestaViewSet):
     search_fields = ['codigo_barras', 'orden__numero_orden']
     filterset_fields = ['orden', 'estado_muestra__nombre', 'condicion_muestra']
 
+    @idempotente
     def create(self, request, *args, **kwargs):
         serializer = MuestraCrearSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -446,6 +450,7 @@ class LecturaEquipoSerialViewSet(mixins.CreateModelMixin, mixins.ListModelMixin,
                 'procesar': 'lecturas.procesar'}
     filterset_fields = ['procesado', 'equipo_origen', 'codigo_barras_leido']
 
+    @idempotente
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -474,6 +479,7 @@ class ResultadoAnalitoViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, mi
     acciones = {'list': 'resultados.ver', 'retrieve': 'resultados.ver', 'create': 'resultados.registrar'}
     filterset_fields = ['examen_solicitado', 'parametro', 'es_anormal', 'es_critico', 'examen_solicitado__orden']
 
+    @idempotente
     def create(self, request, *args, **kwargs):
         serializer = ResultadoRegistrarSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -504,6 +510,7 @@ class InformeResultadosViewSet(viewsets.ReadOnlyModelViewSet):
 
 class NotificacionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
     """Cada usuario ve solo sus notificaciones (RF-41.1)."""
+    queryset = Notificacion.objects.none()  # para el esquema; el real está en get_queryset
     serializer_class = NotificacionSerializer
     permission_classes = [PermisoPorAccion]
     accion_lectura = 'notificaciones.propias'

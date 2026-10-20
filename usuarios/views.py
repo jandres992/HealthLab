@@ -23,7 +23,7 @@ from .models import (
 from .permissions import PermisoPorAccion
 from .roles import es_administrador
 from .serializers import (
-    CambioContrasenaSerializer, DepartamentoSerializer, DispositivoConfianzaSerializer,
+    CambioContrasenaSerializer, DepartamentoSerializer, DispositivoConfianzaSerializer, LogoutSerializer,
     MunicipioSerializer, PerfilPropioSerializer, PermisoSerializer, SexoSerializer,
     TipoIdSerializer, TipoUsuarioSerializer, TokenPersonalizadoSerializer,
     UsuarioSerializer, UsuarioXPermisoSerializer,
@@ -159,6 +159,7 @@ class UsuarioXPermisoViewSet(viewsets.ModelViewSet):
 class DispositivoConfianzaViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin,
                                   mixins.DestroyModelMixin, viewsets.GenericViewSet):
     """Cada usuario ve y revoca los suyos; el Administrador, los de todos."""
+    queryset = DispositivoConfianza.objects.none()  # para el esquema; el real está en get_queryset
     serializer_class = DispositivoConfianzaSerializer
     permission_classes = [IsAuthenticated]
 
@@ -180,6 +181,7 @@ class DispositivoConfianzaViewSet(mixins.ListModelMixin, mixins.RetrieveModelMix
 
 class PerfilPropioView(APIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = PerfilPropioSerializer
 
     def get(self, request):
         return Response(PerfilPropioSerializer(request.user, context={'request': request}).data)
@@ -196,6 +198,7 @@ class PerfilPropioView(APIView):
 
 class CambioContrasenaView(APIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = CambioContrasenaSerializer
 
     def post(self, request):
         serializer = CambioContrasenaSerializer(data=request.data, context={'request': request})
@@ -264,6 +267,7 @@ class RefrescarTokenView(TokenRefreshView):
 class LogoutView(APIView):
     """Invalida el refresh token enviado (RF-08)."""
     permission_classes = [IsAuthenticated]
+    serializer_class = LogoutSerializer
 
     def post(self, request):
         refresh = request.data.get('refresh')

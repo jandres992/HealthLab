@@ -6,6 +6,7 @@ Serializadores del módulo laboratorio.
 - Los serializadores de escritura (`*CrearSerializer`) validan formato; las
   reglas clínicas viven en services/ y domain/.
 """
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from .models import (
@@ -86,7 +87,7 @@ class PacienteSerializer(serializers.ModelSerializer):
     tipo_documento = serializers.SlugRelatedField(slug_field='codigo',
                                                   queryset=TipoDocumentoPaciente.objects.filter(activo=True))
     sexo_biologico = serializers.SlugRelatedField(slug_field='codigo', queryset=SexoBiologico.objects.all())
-    nombre_completo = serializers.ReadOnlyField()
+    nombre_completo = serializers.CharField(read_only=True)
 
     class Meta:
         model = Paciente
@@ -118,7 +119,7 @@ class ExamenSolicitadoSerializer(serializers.ModelSerializer):
     paciente_nombre = serializers.SerializerMethodField()
     paciente_documento = serializers.ReadOnlyField(source='orden.paciente.numero_documento')
     validado_por_username = serializers.ReadOnlyField(source='validado_por.username')
-    validado_por_nombre = serializers.ReadOnlyField(source='validado_por.nombre_completo')
+    validado_por_nombre = serializers.CharField(source='validado_por.nombre_completo', read_only=True)
     validado_por_registro = serializers.ReadOnlyField(source='validado_por.registro_profesional')
 
     class Meta:
@@ -131,6 +132,7 @@ class ExamenSolicitadoSerializer(serializers.ModelSerializer):
                   'motivo_anulacion', 'fecha_anulacion', 'version']
         read_only_fields = [f for f in fields if f not in ('orden', 'cups')]
 
+    @extend_schema_field(serializers.CharField())
     def get_paciente_nombre(self, obj):
         return obj.orden.paciente.nombre_completo
 
@@ -138,7 +140,7 @@ class ExamenSolicitadoSerializer(serializers.ModelSerializer):
 class OrdenLaboratorioSerializer(serializers.ModelSerializer):
     """Lectura de una orden con sus exámenes."""
     estado_general = serializers.ReadOnlyField(source='estado_general.nombre')
-    paciente_nombre = serializers.ReadOnlyField(source='paciente.nombre_completo')
+    paciente_nombre = serializers.CharField(source='paciente.nombre_completo', read_only=True)
     paciente_documento = serializers.ReadOnlyField(source='paciente.numero_documento')
     medico_nombre = serializers.SerializerMethodField()
     examenes = ExamenSolicitadoSerializer(source='examenes_solicitados', many=True, read_only=True)
@@ -152,6 +154,7 @@ class OrdenLaboratorioSerializer(serializers.ModelSerializer):
                   'fecha_finalizacion', 'finalizada_por', 'informe_pendiente', 'examenes', 'version']
         read_only_fields = fields
 
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_medico_nombre(self, obj):
         return obj.medico.nombre_completo if obj.medico else None
 
@@ -193,7 +196,7 @@ class MuestraFisicaSerializer(serializers.ModelSerializer):
     estado_muestra = serializers.ReadOnlyField(source='estado_muestra.nombre')
     estado_muestra_nombre = serializers.ReadOnlyField(source='estado_muestra.nombre')  # compatibilidad
     orden_numero = serializers.ReadOnlyField(source='orden.numero_orden')
-    paciente_nombre = serializers.ReadOnlyField(source='orden.paciente.nombre_completo')
+    paciente_nombre = serializers.CharField(source='orden.paciente.nombre_completo', read_only=True)
     usuario_recolecta_username = serializers.ReadOnlyField(source='usuario_recolecta.username')
     examenes = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
 

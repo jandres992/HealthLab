@@ -499,6 +499,26 @@ class InformeResultados(models.Model):
         return f"Informe {self.tipo} {self.orden.numero_orden} — {self.fecha_generacion:%Y-%m-%d}"
 
 
+class ClaveIdempotencia(models.Model):
+    """Reserva de `Idempotency-Key` con la respuesta original (RNF-33). Se purga a los 7 días."""
+    huella = models.CharField(max_length=64, unique=True)
+    clave = models.CharField(max_length=128)
+    ruta = models.CharField(max_length=200)
+    usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+                                related_name='claves_idempotencia')
+    equipo_origen = models.CharField(max_length=100, blank=True, default='')
+    codigo_http = models.PositiveSmallIntegerField(null=True, blank=True)
+    respuesta = models.JSONField(null=True, blank=True)
+    completada = models.BooleanField(default=False)
+    creada = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = 'clave_idempotencia_Lab'
+
+    def __str__(self):
+        return f'{self.ruta} {self.clave}'
+
+
 class Notificacion(models.Model):
     TIPO_CHOICES = [
         ('resultado_listo', 'Resultado Listo'),

@@ -370,3 +370,41 @@ class PermisosClinicosTests(BaseLaboratorioTest):
         r = self.client.post(f'/api/v1/equipos/{self.equipo.pk}/regenerar-token/')
         self.assertEqual(r.status_code, 200)
         self.assertIn('token_middleware', r.data)
+
+
+class IdempotenciaTests(BaseLaboratorioTest):
+    def test_reenvio_con_misma_clave_no_duplica(self):
+        orden = self.crear_orden()
+        self.como(self.tecnico)
+        cuerpo = {'orden': str(orden.pk), 'tipo_muestra': 'Orina'}
+        r1 = self.client.post('/api/v1/muestras/', cuerpo, format='json', HTTP_IDEMPOTENCY_KEY='clave-abc')
+        r2 = self.client.post('/api/v1/muestras/', cuerpo, format='json', HTTP_IDEMPOTENCY_KEY='clave-abc')
+        self.assertEqual(r1.status_code, 201, r1.data)
+        self.assertEqual(r2.status_code, 201)
+        self.assertEqual(r2['Idempotent-Replayed'], 'true')
+        self.assertEqual(r1.data['datos']['id'], r2.data['datos']['id'])
+        self.assertEqual(MuestraFisica.objects.filter(orden=orden).count(), 1)
+        r3 = self.client.post('/api/v1/muestras/', cuerpo, format='json', HTTP_IDEMPOTENCY_KEY='clave-xyz')
+        self.assertEqual(r3.status_code, 201)
+        self.assertEqual(MuestraFisica.objects.filter(orden=orden).count(), 2)
+
+    def test_error_no_consume_la_clave(self):
+        self.como(self.tecnico)
+        cuerpo = {'orden': '00000000-0000-0000-0000-000000000000', 'tipo_muestra': 'Orina'}
+        r1 = self.client.post('/api/v1/muestras/', cuerpo, format='json', HTTP_IDEMPOTENCY_KEY='k1')
+        self.assertEqual(r1.status_code, 400)
+        orden = self.crear_orden()
+        self.como(self.tecnico)
+        r2 = self.client.post('/api/v1/muestras/', {'orden': str(orden.pk), 'tipo_muestra': 'Orina'},
+                              format='json', HTTP_IDEMPOTENCY_KEY='k1')
+        self.assertEqual(r2.status_code, 201, r2.data)
+
+    def test_lectura_middleware_idempotente(self):
+        self.client.force_authenticate(None)
+        cuerpo = {'equipo_origen': 'URIT500C-LAB1', 'codigo_barras_leido': 'X', 'trama_cruda': 'RAW', 'datos_json': {}}
+        for _ in range(2):
+            r = self.client.post('/api/v1/lecturas-serial/', cuerpo, format='json',
+                                 HTTP_X_MIDDLEWARE_TOKEN='tok-secreto', HTTP_IDEMPOTENCY_KEY='hash-trama-1')
+            self.assertEqual(r.status_code, 201, getattr(r, 'data', r.content))
+        from .models import LecturaEquipoSerial
+        self.assertEqual(LecturaEquipoSerial.objects.count(), 1)

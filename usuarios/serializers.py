@@ -7,6 +7,7 @@ los ve el Administrador.
 """
 from django.contrib.auth import password_validation
 from django.contrib.auth.hashers import check_password
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import exceptions, serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
@@ -105,7 +106,7 @@ class UsuarioSerializer(serializers.ModelSerializer):
     """Vista del Administrador: crea y edita cuentas; nunca devuelve la contraseña."""
     password = serializers.CharField(write_only=True, required=False, allow_blank=False)
     roles = serializers.SerializerMethodField(read_only=True)
-    nombre_completo = serializers.ReadOnlyField()
+    nombre_completo = serializers.CharField(read_only=True)
 
     class Meta:
         model = Usuario
@@ -119,6 +120,7 @@ class UsuarioSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'is_staff', 'is_superuser', 'roles', 'date_joined', 'last_login']
 
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_roles(self, obj):
         return sorted(roles_de(obj))
 
@@ -154,7 +156,7 @@ class PerfilPropioSerializer(serializers.ModelSerializer):
     roles = serializers.SerializerMethodField(read_only=True)
     roles_etiquetas = serializers.SerializerMethodField(read_only=True)
     acciones = serializers.SerializerMethodField(read_only=True)
-    nombre_completo = serializers.ReadOnlyField()
+    nombre_completo = serializers.CharField(read_only=True)
 
     class Meta:
         model = Usuario
@@ -172,14 +174,21 @@ class PerfilPropioSerializer(serializers.ModelSerializer):
             'roles', 'roles_etiquetas', 'acciones', 'last_login',
         ]
 
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_roles(self, obj):
         return sorted(roles_de(obj))
 
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_roles_etiquetas(self, obj):
         return [ETIQUETAS[r] for r in sorted(roles_de(obj))]
 
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_acciones(self, obj):
         return acciones_de(obj)
+
+
+class LogoutSerializer(serializers.Serializer):
+    refresh = serializers.CharField(required=False, allow_blank=True)
 
 
 class CambioContrasenaSerializer(serializers.Serializer):
