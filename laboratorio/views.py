@@ -13,6 +13,8 @@ from django.db import transaction
 from django.db.models import ProtectedError
 from django.http import HttpResponse
 from django.utils import timezone
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
@@ -170,6 +172,7 @@ class ConfiguracionEquipoViewSet(EstandarRespuestaViewSet):
     accion_escritura = 'equipos.gestionar'
     acciones = {'regenerar_token': 'equipos.regenerar_token'}
 
+    @extend_schema(request=None, responses={200: OpenApiTypes.OBJECT})
     @action(detail=True, methods=['post'], url_path='regenerar-token')
     def regenerar_token(self, request, pk=None):
         equipo = self.get_object()
@@ -235,6 +238,7 @@ class OrdenLaboratorioViewSet(EstandarRespuestaViewSet):
     filterset_fields = {'estado_general__nombre': ['exact'], 'paciente': ['exact'], 'medico': ['exact'],
                         'fecha_orden': ['gte', 'lte']}
 
+    @extend_schema(request=OrdenCrearSerializer, responses={201: OrdenLaboratorioSerializer})
     @idempotente
     def create(self, request, *args, **kwargs):
         serializer = OrdenCrearSerializer(data=request.data)
@@ -246,6 +250,7 @@ class OrdenLaboratorioViewSet(EstandarRespuestaViewSet):
         orden = self.get_queryset().get(pk=orden.pk)
         return exito('Orden creada correctamente.', OrdenLaboratorioSerializer(orden).data, status.HTTP_201_CREATED)
 
+    @extend_schema(request=OrdenEditarSerializer, responses={200: OrdenLaboratorioSerializer})
     def partial_update(self, request, *args, **kwargs):
         orden = self.get_object()
         if orden.estado_general.nombre != E.ORDEN_REGISTRADA:
@@ -260,17 +265,20 @@ class OrdenLaboratorioViewSet(EstandarRespuestaViewSet):
                                 {'campos': sorted(serializer.validated_data)})
         return exito('Orden actualizada.', OrdenLaboratorioSerializer(self.get_queryset().get(pk=orden.pk)).data)
 
+    @extend_schema(request=None, responses={200: OpenApiTypes.OBJECT})
     @action(detail=True, methods=['post'])
     @idempotente
     def admitir(self, request, pk=None):
         orden = svc_ordenes.admitir_orden(request.user, pk, request=request)
         return exito('Admisión registrada correctamente.', fecha_admision=orden.fecha_admision.isoformat())
 
+    @extend_schema(request=None, responses={200: OpenApiTypes.OBJECT, 409: OpenApiTypes.OBJECT})
     @action(detail=True, methods=['post'])
     def finalizar(self, request, pk=None):
         svc_ordenes.finalizar_orden(request.user, pk, request=request)
         return exito('Orden finalizada correctamente y reporte generado.')
 
+    @extend_schema(responses={(200, 'application/pdf'): OpenApiTypes.BINARY})
     @action(detail=True, methods=['get'], url_path='reporte-pdf')
     def reporte_pdf(self, request, pk=None):
         """Final (archivo guardado), parcial (se guarda con hash) o preliminar (no se guarda)."""
@@ -298,6 +306,8 @@ class OrdenLaboratorioViewSet(EstandarRespuestaViewSet):
         respuesta['Content-Disposition'] = f'attachment; filename="{nombre}"'
         return respuesta
 
+    @extend_schema(parameters=[OpenApiParameter('fecha_inicio', OpenApiTypes.DATE), OpenApiParameter('fecha_fin', OpenApiTypes.DATE)],
+                   responses={(200, 'text/csv'): OpenApiTypes.BINARY})
     @action(detail=False, methods=['get'], url_path='export-rips')
     def export_rips(self, request):
         """CSV de órdenes finalizadas para auditoría (RF-42)."""
@@ -346,6 +356,7 @@ class MuestraFisicaViewSet(EstandarRespuestaViewSet):
     search_fields = ['codigo_barras', 'orden__numero_orden']
     filterset_fields = ['orden', 'estado_muestra__nombre', 'condicion_muestra']
 
+    @extend_schema(request=MuestraCrearSerializer, responses={201: MuestraFisicaSerializer})
     @idempotente
     def create(self, request, *args, **kwargs):
         serializer = MuestraCrearSerializer(data=request.data)
@@ -357,6 +368,7 @@ class MuestraFisicaViewSet(EstandarRespuestaViewSet):
         muestra = self.get_queryset().get(pk=muestra.pk)
         return exito('Muestra registrada.', MuestraFisicaSerializer(muestra).data, status.HTTP_201_CREATED)
 
+    @extend_schema(parameters=[OpenApiParameter('codigo_barras', OpenApiTypes.STR, required=True)], responses={200: MuestraFisicaSerializer})
     @action(detail=False, methods=['get'])
     def buscar(self, request):
         codigo = request.query_params.get('codigo_barras', '').strip()
@@ -368,12 +380,14 @@ class MuestraFisicaViewSet(EstandarRespuestaViewSet):
                             status=status.HTTP_404_NOT_FOUND)
         return exito(datos=MuestraFisicaSerializer(muestra).data)
 
+    @extend_schema(request=None, responses={200: OpenApiTypes.OBJECT})
     @action(detail=True, methods=['post'], url_path='recibir-laboratorio')
     def recibir_laboratorio(self, request, pk=None):
         _, actualizados = svc_muestras.recibir_muestra(request.user, pk, request=request)
         return exito('Muestra recibida en laboratorio. Exámenes marcados como En Análisis.',
                      examenes_actualizados=actualizados)
 
+    @extend_schema(request=RechazoSerializer, responses={200: OpenApiTypes.OBJECT})
     @action(detail=True, methods=['post'])
     def rechazar(self, request, pk=None):
         serializer = RechazoSerializer(data=request.data)
@@ -402,6 +416,7 @@ class ExamenSolicitadoViewSet(EstandarRespuestaViewSet):
     search_fields = ['orden__numero_orden', 'cups__codigo_cups', 'cups__descripcion', 'orden__paciente__numero_documento']
     filterset_fields = ['orden', 'estado_examen__nombre', 'cups', 'muestra']
 
+    @extend_schema(request=ExamenAgregarSerializer, responses={201: ExamenSolicitadoSerializer})
     def create(self, request, *args, **kwargs):
         """Agrega un examen a una orden abierta (RF-20.4). La creación normal va con la orden."""
         serializer = ExamenAgregarSerializer(data=request.data)
@@ -420,12 +435,14 @@ class ExamenSolicitadoViewSet(EstandarRespuestaViewSet):
         return exito('Examen agregado a la orden.', ExamenSolicitadoSerializer(self.get_queryset().get(pk=examen.pk)).data,
                      status.HTTP_201_CREATED)
 
+    @extend_schema(request=None, responses={200: OpenApiTypes.OBJECT})
     @action(detail=True, methods=['post'])
     def aprobar(self, request, pk=None):
         examen, orden_finalizada = svc_examenes.aprobar_examen(request.user, pk, request=request)
         return exito('Examen validado correctamente.' + (' Orden marcada como Finalizada.' if orden_finalizada else ''),
                      examen_id=str(examen.pk), orden_finalizada=orden_finalizada)
 
+    @extend_schema(request=RechazoSerializer, responses={200: OpenApiTypes.OBJECT})
     @action(detail=True, methods=['post'])
     def rechazar(self, request, pk=None):
         serializer = RechazoSerializer(data=request.data)
@@ -433,6 +450,7 @@ class ExamenSolicitadoViewSet(EstandarRespuestaViewSet):
         examen = svc_examenes.rechazar_examen(request.user, pk, serializer.validated_data['motivo_rechazo'], request=request)
         return exito('Examen rechazado. Se notificó al flebotomista y al médico.', examen_id=str(examen.pk))
 
+    @extend_schema(request=MotivoSerializer, responses={200: OpenApiTypes.OBJECT})
     @action(detail=True, methods=['post'])
     def anular(self, request, pk=None):
         serializer = MotivoSerializer(data=request.data)
@@ -462,6 +480,7 @@ class LecturaEquipoSerialViewSet(mixins.CreateModelMixin, mixins.ListModelMixin,
     def retrieve(self, request, *args, **kwargs):
         return exito(datos=self.get_serializer(self.get_object()).data)
 
+    @extend_schema(request=None, responses={200: OpenApiTypes.OBJECT})
     @action(detail=True, methods=['post'])
     def procesar(self, request, pk=None):
         resumen = svc_resultados.procesar_lectura(request.user, pk, request=request)
@@ -479,6 +498,7 @@ class ResultadoAnalitoViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, mi
     acciones = {'list': 'resultados.ver', 'retrieve': 'resultados.ver', 'create': 'resultados.registrar'}
     filterset_fields = ['examen_solicitado', 'parametro', 'es_anormal', 'es_critico', 'examen_solicitado__orden']
 
+    @extend_schema(request=ResultadoRegistrarSerializer, responses={201: ResultadoAnalitoSerializer})
     @idempotente
     def create(self, request, *args, **kwargs):
         serializer = ResultadoRegistrarSerializer(data=request.data)
@@ -523,6 +543,7 @@ class NotificacionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, view
             qs = qs.filter(leida=False)
         return qs
 
+    @extend_schema(request=None, responses={200: OpenApiTypes.OBJECT})
     @action(detail=True, methods=['post'], url_path='marcar-leida')
     def marcar_leida(self, request, pk=None):
         notif = self.get_object()
@@ -532,6 +553,7 @@ class NotificacionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, view
             notif.save(update_fields=['leida', 'fecha_lectura'])
         return exito('Notificación marcada como leída.')
 
+    @extend_schema(request=None, responses={200: OpenApiTypes.OBJECT})
     @action(detail=False, methods=['post'], url_path='marcar-todas-leidas')
     def marcar_todas_leidas(self, request):
         actualizadas = self.get_queryset().filter(leida=False).update(leida=True, fecha_lectura=timezone.now())
