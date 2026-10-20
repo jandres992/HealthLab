@@ -241,6 +241,7 @@ SPECTACULAR_SETTINGS = {
     'SERVE_INCLUDE_SCHEMA': False,
     'COMPONENT_SPLIT_REQUEST': True,
     'SCHEMA_PATH_PREFIX': r'/(api/v1|usr)/',
+    'ENUM_NAME_OVERRIDES': {'EstadoEquipoEnum': 'laboratorio.models.ConfiguracionEquipo.ESTADO_CHOICES'},
 }
 
 # Documentación interactiva solo en desarrollo (RNF-27)

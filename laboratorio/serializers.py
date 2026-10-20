@@ -67,8 +67,9 @@ class ParametroExamenSerializer(serializers.ModelSerializer):
         fields = ['id', 'cups', 'cups_codigo', 'nombre_parametro', 'unidades_medida',
                   'rango_referencia_minimo', 'rango_referencia_maximo', 'rango_texto',
                   'rango_panico_minimo', 'rango_panico_maximo',
-                  'sexo_aplica', 'edad_minima_anios', 'edad_maxima_anios', 'activo', 'version']
-        read_only_fields = ['id', 'version']
+                  'sexo_aplica', 'edad_minima_anios', 'edad_maxima_anios', 'metodo', 'codigo_loinc', 'unidad_ucum',
+                  'activo', 'vigente_desde', 'vigente_hasta', 'version_anterior', 'version']
+        read_only_fields = ['id', 'version', 'vigente_desde', 'vigente_hasta', 'version_anterior']
 
 
 class ConfiguracionEquipoSerializer(serializers.ModelSerializer):
@@ -76,7 +77,9 @@ class ConfiguracionEquipoSerializer(serializers.ModelSerializer):
     class Meta:
         model = ConfiguracionEquipo
         fields = ['id', 'nombre', 'codigo_equipo', 'tipo_conexion', 'host_ip', 'puerto',
-                  'protocolo', 'activo', 'descripcion', 'endpoint_destino']
+                  'protocolo', 'activo', 'descripcion', 'endpoint_destino', 'estado', 'calibracion_vigente_hasta',
+                  'ultimo_latido']
+        read_only_fields = ['id', 'estado', 'calibracion_vigente_hasta', 'ultimo_latido']
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -128,7 +131,7 @@ class ExamenSolicitadoSerializer(serializers.ModelSerializer):
                   'codigo_barras', 'estado_examen', 'estado_examen_nombre', 'es_final',
                   'paciente_nombre', 'paciente_documento',
                   'validado_por', 'validado_por_username', 'validado_por_nombre', 'validado_por_registro',
-                  'fecha_validacion', 'motivo_rechazo', 'fecha_rechazo',
+                  'fecha_validacion', 'estado_cci_validacion', 'justificacion_cci', 'motivo_rechazo', 'fecha_rechazo',
                   'motivo_anulacion', 'fecha_anulacion', 'version']
         read_only_fields = [f for f in fields if f not in ('orden', 'cups')]
 
@@ -205,7 +208,8 @@ class MuestraFisicaSerializer(serializers.ModelSerializer):
         fields = ['id', 'orden', 'orden_numero', 'paciente_nombre', 'codigo_barras', 'tipo_muestra',
                   'fecha_recoleccion', 'estado_muestra', 'estado_muestra_nombre', 'usuario_recolecta',
                   'usuario_recolecta_username', 'condicion_muestra', 'motivo_rechazo',
-                  'fecha_recepcion', 'recibida_por', 'fecha_rechazo', 'rechazada_por', 'examenes', 'version']
+                  'fecha_recepcion', 'recibida_por', 'fecha_rechazo', 'rechazada_por', 'muestra_madre', 'ubicacion_actual',
+                  'fecha_declarada_dispositivo', 'examenes', 'version']
         read_only_fields = fields
 
 
@@ -215,6 +219,9 @@ class MuestraCrearSerializer(serializers.Serializer):
     codigo_barras = serializers.CharField(max_length=50, required=False, allow_blank=True)
     fecha_recoleccion = serializers.DateTimeField(required=False)
     condicion_muestra = serializers.ChoiceField(choices=MuestraFisica.CONDICION_CHOICES, required=False)
+    fecha_declarada_dispositivo = serializers.DateTimeField(required=False, allow_null=True)
+    ubicacion = serializers.CharField(max_length=120, required=False, allow_blank=True)
+    observacion = serializers.CharField(required=False, allow_blank=True)
     examenes = serializers.ListField(child=serializers.UUIDField(), required=False,
                                      help_text='Ids de exámenes a vincular; vacío = todos los pendientes o en Repetir.')
 
@@ -257,9 +264,16 @@ class ResultadoAnalitoSerializer(serializers.ModelSerializer):
         fields = ['id', 'examen_solicitado', 'examen_estado', 'orden', 'parametro', 'parametro_nombre',
                   'muestra', 'lectura_serial', 'valor_resultado', 'valor_numerico', 'es_anormal', 'es_critico',
                   'unidades', 'unidades_aplicadas', 'rango_min_aplicado', 'rango_max_aplicado',
-                  'rango_texto_aplicado', 'parametro_version', 'comentario_bacteriologo',
+                  'rango_texto_aplicado', 'parametro_version', 'metodo_aplicado', 'equipo', 'lote_reactivo', 'lote_control',
+                  'critico_escalado', 'tiene_acuse', 'comentario_bacteriologo',
                   'registrado_por', 'fecha_procesamiento', 'version']
         read_only_fields = fields
+
+    tiene_acuse = serializers.SerializerMethodField()
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_tiene_acuse(self, obj) -> bool:
+        return hasattr(obj, 'acuse')
 
 
 class ResultadoRegistrarSerializer(serializers.Serializer):
@@ -267,6 +281,7 @@ class ResultadoRegistrarSerializer(serializers.Serializer):
     parametro = serializers.PrimaryKeyRelatedField(queryset=ParametroExamen.objects.filter(activo=True))
     valor_resultado = serializers.CharField(max_length=100)
     comentario_bacteriologo = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    equipo = serializers.PrimaryKeyRelatedField(queryset=ConfiguracionEquipo.objects.all(), required=False, allow_null=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

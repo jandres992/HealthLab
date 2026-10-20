@@ -24,17 +24,42 @@ def _orden_bloqueada(orden_id):
     return OrdenLaboratorio.objects.select_for_update().select_related('estado_general', 'medico', 'paciente').get(pk=orden_id)
 
 
-def aprobar_examen(actor, examen_id, request=None):
+def _verificar_cci_y_equipo(examen, justificacion):
+    """
+    RN-24: respeta la política de CCI del analito/equipo de cada resultado y
+    exige equipo operativo. Devuelve el estado de CCI más desfavorable.
+    """
+    from laboratorio.domain import calidad  # noqa: PLC0415
+    from .calidad import modo_politica  # noqa: PLC0415
+    from .equipos import exigir_operativo  # noqa: PLC0415
+
+    hoy = timezone.localdate()
+    peor_estado, modos = 'no_aplica', []
+    orden_estados = ['no_aplica', 'aceptado', 'no_corrido', 'rechazado']
+    for r in examen.resultados.select_related('equipo', 'parametro'):
+        if r.equipo is None:
+            continue
+        exigir_operativo(r.equipo)
+        estado = calidad.estado_cci_del_dia(r.equipo, r.parametro.nombre_parametro, hoy)
+        modos.append(modo_politica(r.equipo, r.parametro.nombre_parametro))
+        if orden_estados.index(estado) > orden_estados.index(peor_estado):
+            peor_estado = estado
+    calidad.aplicar_politica(calidad.modo_mas_estricto(modos), peor_estado, justificacion)
+    return peor_estado
+
+
+def aprobar_examen(actor, examen_id, justificacion_cci=None, request=None):
     """
     Validación por el bacteriólogo (RF-34). Es su firma electrónica (RF-34.3):
     queda usuario, fecha y hora; el examen pasa a Validado y no se modifica más.
+    Aplica la política de CCI (RF-50.1) y exige equipo operativo (RF-51).
     """
     with transaction.atomic():
         examen = _examen_bloqueado(examen_id)
         desde = examen.estado_examen.nombre
         E.validar_transicion_examen(desde, E.EXAMEN_VALIDADO)
 
-        total_parametros = ParametroExamen.objects.filter(cups=examen.cups, activo=True) \
+        total_parametros = ParametroExamen.objects.filter(cups=examen.cups, activo=True, vigente_hasta__isnull=True) \
             .values('nombre_parametro').distinct().count()
         total_resultados = examen.resultados.count()
         if total_resultados == 0:
@@ -44,11 +69,14 @@ def aprobar_examen(actor, examen_id, request=None):
                 'No es posible aprobar: faltan resultados por registrar o procesar.',
                 faltantes=total_parametros - total_resultados,
             )
+        estado_cci = _verificar_cci_y_equipo(examen, justificacion_cci)
 
         examen.estado_examen = E.estado_examen(E.EXAMEN_VALIDADO)
         examen.validado_por = actor
         examen.fecha_validacion = timezone.now()
-        examen.save(update_fields=['estado_examen', 'validado_por', 'fecha_validacion'])
+        examen.estado_cci_validacion = estado_cci
+        examen.justificacion_cci = (justificacion_cci or '').strip() or None
+        examen.save(update_fields=['estado_examen', 'validado_por', 'fecha_validacion', 'estado_cci_validacion', 'justificacion_cci'])
 
         orden = _orden_bloqueada(examen.orden_id)
         _, estado_orden = recalcular_estado_orden(orden, actor=actor)

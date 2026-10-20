@@ -51,7 +51,8 @@ def obtener_parametro_para_paciente(cups_id, nombre_parametro, paciente):
 
     parametros = list(
         ParametroExamen.objects.filter(
-            cups_id=cups_id, nombre_parametro=nombre_parametro
+            cups_id=cups_id, nombre_parametro=nombre_parametro,
+            activo=True, vigente_hasta__isnull=True,   # solo versiones vigentes (RF-53)
         ).select_related('sexo_aplica')
     )
     if not parametros:
@@ -205,16 +206,19 @@ def generar_pdf_orden(orden, preliminar=False):
             res_data = [['PARÁMETRO', 'RESULTADO', 'UNIDADES', 'RANGOS DE REFERENCIA']]
             for r in ex.resultados.all():
                 p = r.parametro
-                r_min = p.rango_referencia_minimo if p.rango_referencia_minimo is not None else ""
-                r_max = p.rango_referencia_maximo if p.rango_referencia_maximo is not None else ""
-                rango_str = f"{r_min} - {r_max}" if r_min or r_max else (p.rango_texto or "N/A")
+                r_min = r.rango_min_aplicado if r.rango_min_aplicado is not None else ""
+                r_max = r.rango_max_aplicado if r.rango_max_aplicado is not None else ""
+                rango_str = f"{r_min} - {r_max}" if r_min != "" or r_max != "" else (r.rango_texto_aplicado or p.rango_texto or "N/A")
+                if r.metodo_aplicado or r.equipo_id:
+                    detalle = " / ".join(x for x in [r.metodo_aplicado, r.equipo.codigo_equipo if r.equipo_id else None] if x)
+                    rango_str = f"{rango_str}  ({detalle})"
                 
                 # Resaltar anormales
                 val_display = r.valor_resultado
                 if r.es_anormal:
                     val_display = f"<b>{val_display} *</b>"
                 
-                res_data.append([p.nombre_parametro, val_display, p.unidades_medida or "", rango_str])
+                res_data.append([p.nombre_parametro, val_display, r.unidades_aplicadas or p.unidades_medida or "", rango_str])
             
             t_res = Table(res_data, colWidths=[6*cm, 3*cm, 3*cm, 6*cm])
             t_res.setStyle(TableStyle([

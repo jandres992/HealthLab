@@ -10,6 +10,7 @@ from laboratorio.models import ExamenSolicitado, MuestraFisica, OrdenLaboratorio
 from usuarios import auditoria
 
 from . import notificaciones
+from .custodia import registrar_evento
 from .ordenes import recalcular_estado_orden
 
 
@@ -41,8 +42,12 @@ def registrar_muestra(actor, orden, datos, examenes_ids=None, request=None):
             estado_muestra=E.estado_muestra(E.MUESTRA_RECOLECTADA),
             usuario_recolecta=actor,
             condicion_muestra=datos.get('condicion_muestra') or 'Normal',
+            fecha_declarada_dispositivo=datos.get('fecha_declarada_dispositivo'),
+            ubicacion_actual=datos.get('ubicacion') or '',
         )
         muestra.save()
+        registrar_evento(actor, muestra, 'toma', ubicacion=datos.get('ubicacion') or '',
+                         observacion=datos.get('observacion') or '', fecha_declarada=datos.get('fecha_declarada_dispositivo'))
 
         candidatos = orden.examenes_solicitados.select_for_update().select_related('estado_examen')
         if examenes_ids:
@@ -76,6 +81,7 @@ def recibir_muestra(actor, muestra_id, request=None):
         muestra.fecha_recepcion = timezone.now()
         muestra.recibida_por = actor
         muestra.save(update_fields=['estado_muestra', 'fecha_recepcion', 'recibida_por'])
+        registrar_evento(actor, muestra, 'recepcion', ubicacion='Laboratorio')
 
         en_analisis = E.estado_examen(E.EXAMEN_EN_ANALISIS)
         actualizados = 0
@@ -108,6 +114,7 @@ def rechazar_muestra(actor, muestra_id, motivo, condicion=None, request=None):
         muestra.fecha_rechazo = timezone.now()
         muestra.rechazada_por = actor
         muestra.save(update_fields=['estado_muestra', 'motivo_rechazo', 'condicion_muestra', 'fecha_rechazo', 'rechazada_por'])
+        registrar_evento(actor, muestra, 'rechazo', observacion=f'{muestra.condicion_muestra}: {motivo}')
 
         repetir = E.estado_examen(E.EXAMEN_REPETIR)
         for examen in muestra.examenes.select_for_update().select_related('estado_examen'):

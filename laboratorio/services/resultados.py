@@ -11,6 +11,7 @@ from laboratorio.utils import buscar_valor_parametro, es_anormal, obtener_parame
 from usuarios import auditoria
 
 from . import notificaciones
+from .equipos import equipo_por_origen, exigir_lote_no_vencido, exigir_operativo, lote_reactivo_vigente
 from .ordenes import recalcular_estado_orden
 
 
@@ -21,11 +22,12 @@ def _a_decimal(valor):
         return None
 
 
-def registrar_resultado(actor, examen, parametro, valor, comentario=None, lectura=None, request=None):
+def registrar_resultado(actor, examen, parametro, valor, comentario=None, lectura=None, equipo=None, request=None):
     """
     Crea o actualiza el resultado de un analito en un examen NO validado.
     Usa el rango más específico para el paciente (RN-05), calcula banderas
-    (RN-06, RN-07) y guarda la copia del rango aplicado (RF-53).
+    (RN-06, RN-07), guarda la copia del rango aplicado (RF-53) y la
+    trazabilidad analítica: equipo, lote de reactivo y lote de control (RF-51, RF-52).
     Devuelve (resultado, creado, critico).
     """
     if examen.estado_examen.nombre in E.EXAMEN_ESTADOS_FINALES:
@@ -37,6 +39,16 @@ def registrar_resultado(actor, examen, parametro, valor, comentario=None, lectur
     if valor is None or str(valor).strip() == '':
         raise ErrorDeValidacion('El valor del resultado es obligatorio.', campo='valor_resultado')
 
+    if equipo is None and lectura is not None:
+        equipo = equipo_por_origen(lectura.equipo_origen)
+    exigir_operativo(equipo)
+    lote_reactivo = lote_reactivo_vigente(equipo, parametro.nombre_parametro)
+    exigir_lote_no_vencido(lote_reactivo)
+    lote_control = None
+    if equipo is not None:
+        from laboratorio.models import LoteControl  # noqa: PLC0415
+        lote_control = LoteControl.objects.filter(equipo=equipo, nombre_parametro=parametro.nombre_parametro, activo=True).first()
+
     paciente = examen.orden.paciente
     efectivo = obtener_parametro_para_paciente(parametro.cups_id, parametro.nombre_parametro, paciente) or parametro
     anormal, critico = es_anormal(efectivo, valor)
@@ -47,6 +59,9 @@ def registrar_resultado(actor, examen, parametro, valor, comentario=None, lectur
         defaults={
             'muestra': examen.muestra,
             'lectura_serial': lectura,
+            'equipo': equipo,
+            'lote_reactivo': lote_reactivo,
+            'lote_control': lote_control,
             'valor_resultado': str(valor).strip(),
             'valor_numerico': _a_decimal(valor),
             'es_anormal': anormal,
@@ -56,6 +71,7 @@ def registrar_resultado(actor, examen, parametro, valor, comentario=None, lectur
             'rango_max_aplicado': efectivo.rango_referencia_maximo,
             'rango_texto_aplicado': efectivo.rango_texto,
             'parametro_version': efectivo.version,
+            'metodo_aplicado': efectivo.metodo,
             'comentario_bacteriologo': comentario if comentario is not None else None,
             'registrado_por': actor,
         },
@@ -69,7 +85,7 @@ def registrar_resultado(actor, examen, parametro, valor, comentario=None, lectur
     return resultado, creado, critico
 
 
-def registrar_resultado_manual(actor, examen_id, parametro_id, valor, comentario=None, request=None):
+def registrar_resultado_manual(actor, examen_id, parametro_id, valor, comentario=None, equipo_id=None, request=None):
     """Ingreso manual por el bacteriólogo (RF-32), en transacción con bloqueo del examen."""
     with transaction.atomic():
         try:
@@ -82,8 +98,14 @@ def registrar_resultado_manual(actor, examen_id, parametro_id, valor, comentario
             parametro = ParametroExamen.objects.get(pk=parametro_id)
         except ParametroExamen.DoesNotExist:
             raise NoEncontrado('El parámetro no existe.')
+        equipo = None
+        if equipo_id:
+            from laboratorio.models import ConfiguracionEquipo  # noqa: PLC0415
+            equipo = ConfiguracionEquipo.objects.filter(pk=equipo_id).first()
+            if equipo is None:
+                raise NoEncontrado('El equipo no existe.')
 
-        resultado, creado, critico = registrar_resultado(actor, examen, parametro, valor, comentario, request=request)
+        resultado, creado, critico = registrar_resultado(actor, examen, parametro, valor, comentario, equipo=equipo, request=request)
         if examen.estado_examen.nombre in (E.EXAMEN_PENDIENTE, E.EXAMEN_MUESTRA_RECOLECTADA):
             examen.estado_examen = E.estado_examen(E.EXAMEN_EN_ANALISIS)
             examen.save(update_fields=['estado_examen'])
@@ -107,6 +129,8 @@ def procesar_lectura(actor, lectura_id, request=None):
             raise NoEncontrado('La lectura no existe.')
         if not lectura.codigo_barras_leido:
             raise ErrorDeValidacion('La lectura no tiene código de barras asociado.')
+        equipo = equipo_por_origen(lectura.equipo_origen)
+        exigir_operativo(equipo)
 
         examenes = list(ExamenSolicitado.objects.select_for_update().select_related(
             'cups', 'estado_examen', 'orden__paciente__sexo_biologico', 'orden__medico', 'muestra'
@@ -129,7 +153,7 @@ def procesar_lectura(actor, lectura_id, request=None):
                 if parametro is None or valor is None:
                     omitidos += 1
                     continue
-                _, creado, critico = registrar_resultado(actor, examen, parametro, valor, lectura=lectura, request=request)
+                _, creado, critico = registrar_resultado(actor, examen, parametro, valor, lectura=lectura, equipo=equipo, request=request)
                 creados += int(creado)
                 actualizados += int(not creado)
                 criticos += int(critico)

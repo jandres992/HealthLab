@@ -13,6 +13,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 from simple_history.models import HistoricalRecords
 
 
@@ -137,11 +138,23 @@ class ParametroExamen(VersionadoMixin):
                                     help_text="Deje en blanco si el rango aplica para ambos sexos.")
     edad_minima_anios = models.PositiveSmallIntegerField(null=True, blank=True)
     edad_maxima_anios = models.PositiveSmallIntegerField(null=True, blank=True)
+    metodo = models.CharField(max_length=100, blank=True, null=True, help_text="Método analítico (aparece en el informe, RF-63).")
+    codigo_loinc = models.CharField(max_length=20, blank=True, null=True)
+    unidad_ucum = models.CharField(max_length=30, blank=True, null=True)
     activo = models.BooleanField(default=True)
+    # Vigencia (RF-53): un cambio de rango cierra esta versión y crea otra; nunca se edita la anterior.
+    vigente_desde = models.DateField(default=timezone.localdate)
+    vigente_hasta = models.DateField(null=True, blank=True)
+    version_anterior = models.ForeignKey('self', on_delete=models.PROTECT, null=True, blank=True,
+                                         related_name='versiones_posteriores')
     history = HistoricalRecords()
 
     class Meta:
         db_table = 'parametro_examen_Lab'
+
+    @property
+    def vigente(self):
+        return self.activo and self.vigente_hasta is None
 
     def __str__(self):
         sexo = f" [{self.sexo_aplica.codigo}]" if self.sexo_aplica else ""
@@ -173,6 +186,15 @@ class ConfiguracionEquipo(models.Model):
     descripcion = models.TextField(blank=True, null=True)
     endpoint_destino = models.CharField(max_length=200, default='/api/v1/lecturas-serial/')
     token_middleware = models.CharField(max_length=80, unique=True, null=True, blank=True)
+    # Gestión del equipo (RF-51)
+    ESTADO_CHOICES = [
+        ('operativo', 'Operativo'),
+        ('mantenimiento', 'En mantenimiento'),
+        ('fuera_servicio', 'Fuera de servicio'),
+    ]
+    estado = models.CharField(max_length=15, choices=ESTADO_CHOICES, default='operativo')
+    calibracion_vigente_hasta = models.DateField(null=True, blank=True)
+    ultimo_latido = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = 'configuracion_equipo_Lab'
@@ -181,6 +203,150 @@ class ConfiguracionEquipo(models.Model):
 
     def __str__(self):
         return f"{self.nombre} ({self.codigo_equipo})"
+
+    def motivo_no_operativo(self, hoy=None):
+        """None si puede procesar; si no, el motivo (RF-51)."""
+        from django.utils import timezone  # noqa: PLC0415
+        hoy = hoy or timezone.localdate()
+        if not self.activo:
+            return 'El equipo está inactivo.'
+        if self.estado != 'operativo':
+            return f"El equipo está en estado '{self.get_estado_display()}'."
+        if self.calibracion_vigente_hasta and self.calibracion_vigente_hasta < hoy:
+            return f'La calibración del equipo venció el {self.calibracion_vigente_hasta:%d/%m/%Y}.'
+        return None
+
+
+class CalibracionEquipo(models.Model):
+    """Registro de calibraciones (RF-51)."""
+    equipo = models.ForeignKey(ConfiguracionEquipo, on_delete=models.PROTECT, related_name='calibraciones')
+    fecha = models.DateField()
+    vigente_hasta = models.DateField()
+    resultado = models.CharField(max_length=20, choices=[('conforme', 'Conforme'), ('no_conforme', 'No conforme')], default='conforme')
+    realizada_por = models.CharField(max_length=120, help_text="Técnico o empresa que calibró.")
+    certificado = models.CharField(max_length=120, blank=True, null=True)
+    observacion = models.TextField(blank=True, null=True)
+    registrada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
+                                       related_name='calibraciones_registradas')
+    creada = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'calibracion_equipo_Lab'
+        ordering = ['-fecha']
+
+
+class MantenimientoEquipo(models.Model):
+    """Mantenimientos preventivos y correctivos (RF-51)."""
+    TIPO_CHOICES = [('preventivo', 'Preventivo'), ('correctivo', 'Correctivo')]
+    equipo = models.ForeignKey(ConfiguracionEquipo, on_delete=models.PROTECT, related_name='mantenimientos')
+    tipo = models.CharField(max_length=12, choices=TIPO_CHOICES)
+    fecha = models.DateField()
+    descripcion = models.TextField()
+    realizado_por = models.CharField(max_length=120)
+    proximo = models.DateField(null=True, blank=True, help_text="Fecha del próximo mantenimiento preventivo.")
+    registrado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
+                                       related_name='mantenimientos_registrados')
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'mantenimiento_equipo_Lab'
+        ordering = ['-fecha']
+
+
+class LoteReactivo(models.Model):
+    """Lotes de reactivo por equipo y analito (RF-52). No se procesa con un lote vencido."""
+    equipo = models.ForeignKey(ConfiguracionEquipo, on_delete=models.PROTECT, null=True, blank=True, related_name='lotes_reactivo')
+    nombre_parametro = models.CharField(max_length=100, blank=True, default='', help_text="Vacío = aplica a todos los analitos del equipo.")
+    nombre = models.CharField(max_length=120)
+    lote = models.CharField(max_length=60)
+    fecha_vencimiento = models.DateField()
+    fecha_apertura = models.DateField(null=True, blank=True)
+    activo = models.BooleanField(default=True)
+    registrado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
+                                       related_name='lotes_registrados')
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'lote_reactivo_Lab'
+        indexes = [models.Index(fields=['equipo', 'nombre_parametro', 'activo'])]
+
+    def __str__(self):
+        return f"{self.nombre} lote {self.lote}"
+
+    def vencido(self, hoy=None):
+        from django.utils import timezone  # noqa: PLC0415
+        return self.fecha_vencimiento < (hoy or timezone.localdate())
+
+
+# ==========================================
+# 1c. Control de calidad interno — RF-50
+# ==========================================
+
+class LoteControl(models.Model):
+    """Material de control con media y desviación estándar objetivo por analito y nivel."""
+    equipo = models.ForeignKey(ConfiguracionEquipo, on_delete=models.PROTECT, related_name='lotes_control')
+    nombre_parametro = models.CharField(max_length=100)
+    nivel = models.PositiveSmallIntegerField(default=1, help_text="1 = normal, 2 = patológico, 3 = alto")
+    lote = models.CharField(max_length=60)
+    fecha_vencimiento = models.DateField()
+    media_objetivo = models.DecimalField(max_digits=12, decimal_places=4)
+    desviacion_objetivo = models.DecimalField(max_digits=12, decimal_places=4)
+    unidades = models.CharField(max_length=20, blank=True, null=True)
+    activo = models.BooleanField(default=True)
+    registrado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
+                                       related_name='lotes_control_registrados')
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'lote_control_Lab'
+        indexes = [models.Index(fields=['equipo', 'nombre_parametro', 'activo'])]
+
+    def __str__(self):
+        return f"{self.nombre_parametro} N{self.nivel} lote {self.lote} ({self.equipo.codigo_equipo})"
+
+
+class CorridaCCI(models.Model):
+    """Una corrida de control: valor, z-score y evaluación por reglas de Westgard."""
+    RESULTADO_CHOICES = [('aceptada', 'Aceptada'), ('advertencia', 'Advertencia'), ('rechazada', 'Rechazada')]
+    lote_control = models.ForeignKey(LoteControl, on_delete=models.PROTECT, related_name='corridas')
+    valor = models.DecimalField(max_digits=12, decimal_places=4)
+    z_score = models.DecimalField(max_digits=8, decimal_places=3)
+    resultado = models.CharField(max_length=12, choices=RESULTADO_CHOICES)
+    reglas_violadas = models.JSONField(default=list, blank=True)
+    fecha = models.DateTimeField(db_index=True)
+    registrada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
+                                       related_name='corridas_cci')
+    lectura = models.ForeignKey('LecturaEquipoSerial', on_delete=models.PROTECT, null=True, blank=True)
+    accion_correctiva = models.TextField(blank=True, null=True, help_text="Documentada por el bacteriólogo; libera un rechazo.")
+    accion_correctiva_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
+                                              related_name='acciones_correctivas_cci')
+    fecha_accion_correctiva = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'corrida_cci_Lab'
+        ordering = ['-fecha']
+
+    def __str__(self):
+        return f"{self.lote_control} {self.fecha:%Y-%m-%d %H:%M} z={self.z_score} {self.resultado}"
+
+
+class PoliticaCCI(models.Model):
+    """Modo de la política de CCI por equipo y analito (RF-50.1). Por defecto: informativo."""
+    MODO_CHOICES = [('informativo', 'Informativo'), ('advertencia', 'Advertencia'), ('bloqueante', 'Bloqueante')]
+    equipo = models.ForeignKey(ConfiguracionEquipo, on_delete=models.PROTECT, related_name='politicas_cci')
+    nombre_parametro = models.CharField(max_length=100)
+    modo = models.CharField(max_length=12, choices=MODO_CHOICES, default='informativo')
+    actualizada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
+                                        related_name='politicas_cci_actualizadas')
+    actualizada = models.DateTimeField(auto_now=True)
+    history = HistoricalRecords()
+
+    class Meta:
+        db_table = 'politica_cci_Lab'
+        constraints = [models.UniqueConstraint(fields=['equipo', 'nombre_parametro'], name='unique_politica_cci_equipo_parametro')]
+
+    def __str__(self):
+        return f"{self.equipo.codigo_equipo} / {self.nombre_parametro}: {self.modo}"
 
 
 # ==========================================
@@ -350,6 +516,12 @@ class MuestraFisica(VersionadoMixin):
     fecha_rechazo = models.DateTimeField(null=True, blank=True)
     rechazada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
                                       related_name='muestras_rechazadas')
+    # Cadena de custodia (RF-57)
+    muestra_madre = models.ForeignKey('self', on_delete=models.PROTECT, null=True, blank=True, related_name='alicuotas',
+                                      help_text="Muestra de la que se obtuvo esta alícuota.")
+    ubicacion_actual = models.CharField(max_length=120, blank=True, default='')
+    fecha_declarada_dispositivo = models.DateTimeField(null=True, blank=True,
+                                                       help_text="Hora de toma declarada por el dispositivo (operación offline, RN-27).")
     history = HistoricalRecords()
 
     class Meta:
@@ -358,6 +530,45 @@ class MuestraFisica(VersionadoMixin):
 
     def __str__(self):
         return f"{self.tipo_muestra} [{self.codigo_barras}]"
+
+
+class EventoMuestra(models.Model):
+    """
+    Cadena de custodia (RF-57, RNF-37): una fila inmutable por cada hecho de la
+    muestra, con usuario, rol, hora del servidor y ubicación. Nunca se edita ni borra.
+    """
+    TIPO_CHOICES = [
+        ('toma', 'Toma'),
+        ('transporte', 'Transporte'),
+        ('recepcion', 'Recepción en laboratorio'),
+        ('alicuota', 'Alícuota'),
+        ('almacenamiento', 'Almacenamiento'),
+        ('analisis', 'Análisis'),
+        ('rechazo', 'Rechazo'),
+        ('descarte', 'Descarte'),
+        ('nota', 'Nota'),
+    ]
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    muestra = models.ForeignKey(MuestraFisica, on_delete=models.PROTECT, related_name='eventos')
+    tipo = models.CharField(max_length=15, choices=TIPO_CHOICES)
+    fecha = models.DateTimeField(db_index=True, help_text="Hora del servidor (RN-27).")
+    fecha_declarada_dispositivo = models.DateTimeField(null=True, blank=True)
+    usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
+                                related_name='eventos_muestra')
+    rol = models.CharField(max_length=30, blank=True, default='')
+    ubicacion = models.CharField(max_length=120, blank=True, default='')
+    temperatura = models.DecimalField(max_digits=5, decimal_places=1, null=True, blank=True)
+    observacion = models.TextField(blank=True, default='')
+    muestra_relacionada = models.ForeignKey(MuestraFisica, on_delete=models.PROTECT, null=True, blank=True,
+                                            related_name='eventos_relacionados',
+                                            help_text="Alícuota creada o muestra madre, según el evento.")
+
+    class Meta:
+        db_table = 'evento_muestra_Lab'
+        ordering = ['fecha']
+
+    def __str__(self):
+        return f"{self.muestra.codigo_barras} {self.tipo} {self.fecha:%Y-%m-%d %H:%M}"
 
 
 class ExamenSolicitado(VersionadoMixin):
@@ -376,6 +587,9 @@ class ExamenSolicitado(VersionadoMixin):
     rechazado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
                                       related_name='examenes_rechazados')
     fecha_rechazo = models.DateTimeField(null=True, blank=True)
+    # Política de CCI al validar (RF-50.1.2): estado del CCI y justificación si el modo era Advertencia
+    estado_cci_validacion = models.CharField(max_length=20, blank=True, default='')
+    justificacion_cci = models.TextField(blank=True, null=True)
     # Anulación (RF-35.2)
     motivo_anulacion = models.TextField(blank=True, null=True)
     anulado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
@@ -432,12 +646,20 @@ class ResultadoAnalito(VersionadoMixin):
     valor_numerico = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
     es_anormal = models.BooleanField(default=False)
     es_critico = models.BooleanField(default=False)
+    # Escalado de críticos sin acuse (RF-54.1)
+    critico_escalado = models.BooleanField(default=False)
+    fecha_escalado = models.DateTimeField(null=True, blank=True)
     # Copia del rango aplicado (RF-53)
     unidades_aplicadas = models.CharField(max_length=20, blank=True, null=True)
     rango_min_aplicado = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True)
     rango_max_aplicado = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True)
     rango_texto_aplicado = models.CharField(max_length=100, blank=True, null=True)
     parametro_version = models.PositiveIntegerField(null=True, blank=True)
+    metodo_aplicado = models.CharField(max_length=100, blank=True, null=True)
+    # Trazabilidad analítica (RF-51, RF-52)
+    equipo = models.ForeignKey(ConfiguracionEquipo, on_delete=models.PROTECT, null=True, blank=True, related_name='resultados')
+    lote_reactivo = models.ForeignKey(LoteReactivo, on_delete=models.PROTECT, null=True, blank=True, related_name='resultados')
+    lote_control = models.ForeignKey(LoteControl, on_delete=models.PROTECT, null=True, blank=True, related_name='resultados')
     comentario_bacteriologo = models.TextField(blank=True, null=True)
     registrado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
                                        related_name='resultados_registrados')
@@ -497,6 +719,30 @@ class InformeResultados(models.Model):
 
     def __str__(self):
         return f"Informe {self.tipo} {self.orden.numero_orden} — {self.fecha_generacion:%Y-%m-%d}"
+
+
+class AcuseValorCritico(models.Model):
+    """
+    Comunicación de un valor crítico con acuse (RF-54): a quién, por qué medio,
+    cuándo y confirmación por repetición (read-back). Sin acuse la orden no cierra (RN-25).
+    """
+    MEDIO_CHOICES = [('telefono', 'Teléfono'), ('presencial', 'Presencial'), ('sistema', 'Sistema'), ('otro', 'Otro')]
+    resultado = models.OneToOneField(ResultadoAnalito, on_delete=models.PROTECT, related_name='acuse')
+    comunicado_a = models.CharField(max_length=150, help_text="Nombre del médico o enfermera que recibió el valor.")
+    medio = models.CharField(max_length=12, choices=MEDIO_CHOICES)
+    read_back = models.BooleanField(default=False, help_text="El receptor repitió el valor (confirmación).")
+    fecha_comunicacion = models.DateTimeField(help_text="Hora del servidor al registrar el acuse.")
+    fecha_declarada = models.DateTimeField(null=True, blank=True, help_text="Hora en que se hizo la llamada, si fue antes.")
+    registrado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='acuses_registrados')
+    observacion = models.TextField(blank=True, default='')
+    escalado = models.BooleanField(default=False)
+    fecha_escalado = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'acuse_valor_critico_Lab'
+
+    def __str__(self):
+        return f"Acuse {self.resultado_id} → {self.comunicado_a}"
 
 
 class ClaveIdempotencia(models.Model):

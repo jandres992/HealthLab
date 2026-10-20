@@ -15,7 +15,8 @@ API del sistema LIMS HealthLab. La especificación completa está en
 | Historial y versión optimista en entidades clínicas, FK `PROTECT`, secuencia de órdenes | ✔ |
 | Idempotencia (`Idempotency-Key`), esquema OpenAPI sin advertencias | ✔ |
 | PostgreSQL, Celery/Redis (PDF y notificaciones asíncronas), `django-pghistory` | pendiente (requiere instalar PostgreSQL) |
-| Bridge de analizadores, CCI, cadena de custodia, acuse de críticos (Fase 2) | pendiente |
+| Cadena de custodia, versionado de rangos, CCI con política configurable (Westgard), acuse de críticos con escalado, equipos (calibración, mantenimiento, estado) y lotes | ✔ |
+| Bridge de analizadores (serial/HL7), mapeo de canales, emulador | pendiente |
 
 ## Ejecución local
 
@@ -54,7 +55,7 @@ Contraseña de todos: `Prueba123*`
 python manage.py test
 ```
 
-46 pruebas por rol: seguridad de usuarios, flujo clínico completo, reglas de cierre,
+64 pruebas por rol: seguridad de usuarios, flujo clínico completo, reglas de cierre,
 rollback cuando falla el PDF, inmutabilidad de resultados validados, permisos e idempotencia.
 
 ## Estructura

@@ -47,6 +47,13 @@ router.register(r'resultados', ResultadoAnalitoViewSet, basename='resultados')
 # ── FASE 6 ────────────────────────────────────────────────────────────────────
 router.register(r'informes', InformeResultadosViewSet, basename='informes')
 router.register(r'notificaciones', NotificacionViewSet, basename='notificaciones')
+# ── FASE 2 — custodia, calidad, críticos, lotes ───────────────────────────────
+from .views_calidad import CorridaCCIViewSet, CriticoViewSet, EventoMuestraViewSet, LoteControlViewSet, LoteReactivoViewSet  # noqa: E402
+router.register(r'eventos-muestra', EventoMuestraViewSet, basename='eventos-muestra')
+router.register(r'lotes-reactivo', LoteReactivoViewSet, basename='lotes-reactivo')
+router.register(r'lotes-control', LoteControlViewSet, basename='lotes-control')
+router.register(r'cci', CorridaCCIViewSet, basename='cci')
+router.register(r'criticos', CriticoViewSet, basename='criticos')
 
 urlpatterns = [
     path('api/v1/', include(router.urls)),

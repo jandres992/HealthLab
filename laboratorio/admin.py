@@ -1,6 +1,8 @@
 from django.contrib import admin
 
 from .models import (
+    AcuseValorCritico, CalibracionEquipo, CorridaCCI, EventoMuestra, LoteControl, LoteReactivo,
+    MantenimientoEquipo, PoliticaCCI,
     CatalogoCups,
     ConfiguracionEquipo,
     EstadoExamen,
@@ -116,3 +118,58 @@ class NotificacionAdmin(admin.ModelAdmin):
     search_fields = ("mensaje", "destinatario__username", "orden__numero_orden")
     list_filter = ("tipo", "leida", "fecha_creacion")
     autocomplete_fields = ("destinatario", "orden")
+
+
+@admin.register(EventoMuestra)
+class EventoMuestraAdmin(admin.ModelAdmin):
+    list_display = ("muestra", "tipo", "fecha", "usuario", "ubicacion")
+    list_filter = ("tipo", "fecha")
+    search_fields = ("muestra__codigo_barras", "observacion")
+    readonly_fields = [f.name for f in EventoMuestra._meta.fields]
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(LoteReactivo)
+class LoteReactivoAdmin(admin.ModelAdmin):
+    list_display = ("nombre", "lote", "equipo", "nombre_parametro", "fecha_vencimiento", "activo")
+    list_filter = ("equipo", "activo")
+    search_fields = ("nombre", "lote")
+
+
+@admin.register(LoteControl)
+class LoteControlAdmin(admin.ModelAdmin):
+    list_display = ("equipo", "nombre_parametro", "nivel", "lote", "media_objetivo", "desviacion_objetivo", "activo")
+    list_filter = ("equipo", "activo")
+
+
+@admin.register(CorridaCCI)
+class CorridaCCIAdmin(admin.ModelAdmin):
+    list_display = ("lote_control", "fecha", "valor", "z_score", "resultado", "registrada_por")
+    list_filter = ("resultado", "lote_control__equipo")
+
+
+@admin.register(PoliticaCCI)
+class PoliticaCCIAdmin(admin.ModelAdmin):
+    list_display = ("equipo", "nombre_parametro", "modo", "actualizada_por", "actualizada")
+    list_filter = ("modo", "equipo")
+
+
+@admin.register(CalibracionEquipo)
+class CalibracionEquipoAdmin(admin.ModelAdmin):
+    list_display = ("equipo", "fecha", "vigente_hasta", "resultado", "realizada_por")
+
+
+@admin.register(MantenimientoEquipo)
+class MantenimientoEquipoAdmin(admin.ModelAdmin):
+    list_display = ("equipo", "tipo", "fecha", "realizado_por", "proximo")
+
+
+@admin.register(AcuseValorCritico)
+class AcuseValorCriticoAdmin(admin.ModelAdmin):
+    list_display = ("resultado", "comunicado_a", "medio", "read_back", "fecha_comunicacion", "registrado_por")
+    readonly_fields = [f.name for f in AcuseValorCritico._meta.fields]

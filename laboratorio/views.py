@@ -48,6 +48,10 @@ from .services import muestras as svc_muestras
 from .services import ordenes as svc_ordenes
 from .services import pacientes as svc_pacientes
 from .services import resultados as svc_resultados
+from .services import equipos as svc_equipos
+from .services import parametros as svc_parametros
+from .serializers_calidad import AprobarSerializer
+from .views_calidad import CustodiaMuestraMixin, EquipoGestionMixin
 
 
 def exito(mensaje=None, datos=None, codigo=status.HTTP_200_OK, **extra):
@@ -160,17 +164,29 @@ class ParametroExamenViewSet(EstandarRespuestaViewSet):
             qs = qs.filter(cups_id=cups_query) if cups_query.isdigit() else qs.filter(cups__codigo_cups=cups_query)
         return qs
 
+    def update(self, request, *args, **kwargs):
+        """RF-53: un cambio de rango crea una versión nueva; la anterior queda cerrada e intacta."""
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        parametro, nueva = svc_parametros.nueva_version(request.user, instance.pk, dict(serializer.validated_data), request=request)
+        return exito('Nueva versión del parámetro creada.' if nueva else 'Parámetro actualizado.',
+                     self.get_serializer(parametro).data, version_nueva=nueva)
+
     def perform_destroy(self, instance):
         instance.activo = False
         instance.save(update_fields=['activo'])
 
 
-class ConfiguracionEquipoViewSet(EstandarRespuestaViewSet):
+class ConfiguracionEquipoViewSet(EquipoGestionMixin, EstandarRespuestaViewSet):
     queryset = ConfiguracionEquipo.objects.all().order_by('nombre')
     serializer_class = ConfiguracionEquipoSerializer
     accion_lectura = 'equipos.ver'
     accion_escritura = 'equipos.gestionar'
-    acciones = {'regenerar_token': 'equipos.regenerar_token'}
+    acciones = {'regenerar_token': 'equipos.regenerar_token', 'calibracion': 'equipos.mantenimiento',
+                'calibraciones': 'equipos.ver', 'mantenimiento': 'equipos.mantenimiento', 'mantenimientos': 'equipos.ver',
+                'cambiar_estado': 'equipos.mantenimiento', 'latido': 'equipos.ver'}
 
     @extend_schema(request=None, responses={200: OpenApiTypes.OBJECT})
     @action(detail=True, methods=['post'], url_path='regenerar-token')
@@ -344,7 +360,7 @@ class OrdenLaboratorioViewSet(EstandarRespuestaViewSet):
 # FASE 3 — Muestras
 # ─────────────────────────────────────────────────────────────────────────────
 
-class MuestraFisicaViewSet(EstandarRespuestaViewSet):
+class MuestraFisicaViewSet(CustodiaMuestraMixin, EstandarRespuestaViewSet):
     queryset = MuestraFisica.objects.select_related('orden__paciente', 'estado_muestra', 'usuario_recolecta') \
         .prefetch_related('examenes').order_by('-fecha_recoleccion')
     serializer_class = MuestraFisicaSerializer
@@ -352,6 +368,7 @@ class MuestraFisicaViewSet(EstandarRespuestaViewSet):
     acciones = {
         'list': 'muestras.ver', 'retrieve': 'muestras.ver', 'create': 'muestras.registrar',
         'buscar': 'muestras.buscar', 'recibir_laboratorio': 'muestras.recibir', 'rechazar': 'muestras.rechazar',
+        'custodia': 'custodia.ver', 'evento': 'custodia.registrar', 'alicuota': 'muestras.recibir', 'descartar': 'muestras.recibir',
     }
     search_fields = ['codigo_barras', 'orden__numero_orden']
     filterset_fields = ['orden', 'estado_muestra__nombre', 'condicion_muestra']
@@ -435,10 +452,13 @@ class ExamenSolicitadoViewSet(EstandarRespuestaViewSet):
         return exito('Examen agregado a la orden.', ExamenSolicitadoSerializer(self.get_queryset().get(pk=examen.pk)).data,
                      status.HTTP_201_CREATED)
 
-    @extend_schema(request=None, responses={200: OpenApiTypes.OBJECT})
+    @extend_schema(request=AprobarSerializer, responses={200: OpenApiTypes.OBJECT, 409: OpenApiTypes.OBJECT})
     @action(detail=True, methods=['post'])
     def aprobar(self, request, pk=None):
-        examen, orden_finalizada = svc_examenes.aprobar_examen(request.user, pk, request=request)
+        s = AprobarSerializer(data=request.data or {})
+        s.is_valid(raise_exception=True)
+        examen, orden_finalizada = svc_examenes.aprobar_examen(
+            request.user, pk, justificacion_cci=s.validated_data.get('justificacion_cci'), request=request)
         return exito('Examen validado correctamente.' + (' Orden marcada como Finalizada.' if orden_finalizada else ''),
                      examen_id=str(examen.pk), orden_finalizada=orden_finalizada)
 
@@ -472,6 +492,8 @@ class LecturaEquipoSerialViewSet(mixins.CreateModelMixin, mixins.ListModelMixin,
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        # RF-51: un equipo fuera de servicio o con calibración vencida no acepta lecturas.
+        svc_equipos.exigir_operativo(svc_equipos.equipo_por_origen(serializer.validated_data.get('equipo_origen')))
         lectura = serializer.save()
         auditoria.registrar(request, 'lectura.recibir', 'LecturaEquipoSerial', lectura.pk,
                             {'equipo_origen': lectura.equipo_origen, 'codigo_barras': lectura.codigo_barras_leido})
@@ -506,7 +528,7 @@ class ResultadoAnalitoViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, mi
         d = serializer.validated_data
         resultado, creado = svc_resultados.registrar_resultado_manual(
             request.user, d['examen_solicitado'].pk, d['parametro'].pk, d['valor_resultado'],
-            d.get('comentario_bacteriologo'), request=request,
+            d.get('comentario_bacteriologo'), equipo_id=request.data.get('equipo'), request=request,
         )
         resultado = self.get_queryset().get(pk=resultado.pk)
         return exito('Resultado guardado.', ResultadoAnalitoSerializer(resultado).data,

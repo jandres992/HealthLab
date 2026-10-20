@@ -34,6 +34,15 @@ MATRIZ = {
     'equipos.ver': (R.BACTERIOLOGO, R.AUDITOR, R.ADMINISTRADOR),
     'equipos.gestionar': (R.ADMINISTRADOR,),
     'equipos.regenerar_token': (R.ADMINISTRADOR,),
+    'equipos.mantenimiento': (R.ADMINISTRADOR, R.BACTERIOLOGO),   # calibraciones, mantenimientos, estado
+    'lotes.ver': (R.BACTERIOLOGO, R.AUDITOR, R.ADMINISTRADOR),
+    'lotes.gestionar': (R.BACTERIOLOGO,),
+    'calidad.ver': (R.BACTERIOLOGO, R.AUDITOR, R.ADMINISTRADOR),
+    'calidad.gestionar': (R.BACTERIOLOGO,),                       # corridas, acciones correctivas, política
+    'custodia.ver': R.ROLES_CLINICOS,
+    'custodia.registrar': (R.TECNICO, R.BACTERIOLOGO),
+    'criticos.ver': (R.MEDICO, R.BACTERIOLOGO, R.AUDITOR),
+    'criticos.acusar': (R.MEDICO, R.BACTERIOLOGO),
 
     # ── Pacientes ───────────────────────────────────────────────────────────
     'pacientes.ver': R.ROLES_CLINICOS,

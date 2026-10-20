@@ -96,6 +96,11 @@ def recalcular_estado_orden(orden, actor=None):
     examenes = list(orden.examenes_solicitados.select_related('estado_examen'))
     actual = orden.estado_general.nombre
     nuevo = E.calcular_estado_orden(examenes, estado_actual=actual)
+    if nuevo == E.ORDEN_FINALIZADA:
+        # RN-25: con valores críticos sin acuse la orden no cierra; queda en parciales.
+        from .criticos import criticos_sin_acuse  # noqa: PLC0415
+        if criticos_sin_acuse(orden):
+            nuevo = E.ORDEN_RESULTADOS_PARCIALES
     if nuevo == actual:
         return False, actual
 
@@ -139,6 +144,15 @@ def finalizar_orden(actor, orden_id, request=None):
                 'No se puede finalizar: hay exámenes pendientes o ninguno validado.',
                 pendientes=[{'id': str(e.pk), 'cups': e.cups.codigo_cups, 'examen': e.cups.descripcion,
                              'estado': e.estado_examen.nombre} for e in pendientes],
+            )
+        from .criticos import criticos_sin_acuse  # noqa: PLC0415
+        criticos = criticos_sin_acuse(orden)
+        if criticos:
+            raise ErrorDeDominio(
+                'No se puede finalizar: hay valores críticos sin acuse de comunicación (RN-25).',
+                estado='criticos_sin_acuse',
+                criticos=[{'resultado_id': str(r.pk), 'parametro': r.parametro.nombre_parametro,
+                           'valor': r.valor_resultado} for r in criticos],
             )
         cambio, _ = recalcular_estado_orden(orden, actor=actor)
         if not cambio:  # ya cumplía las condiciones pero no se había cerrado
