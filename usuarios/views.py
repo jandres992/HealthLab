@@ -17,13 +17,13 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from . import auditoria
 from .models import (
-    Departamento, DispositivoConfianza, Municipio, Permiso, Sexo,
+    Auditoria, Departamento, DispositivoConfianza, Municipio, Permiso, Sexo,
     TipoId, TipoUsuario, Usuario, UsuarioXPermiso,
 )
 from .permissions import PermisoPorAccion
 from .roles import es_administrador
 from .serializers import (
-    CambioContrasenaSerializer, DepartamentoSerializer, DispositivoConfianzaSerializer, LogoutSerializer,
+    AuditoriaSerializer, CambioContrasenaSerializer, DepartamentoSerializer, DispositivoConfianzaSerializer, LogoutSerializer,
     MunicipioSerializer, PerfilPropioSerializer, PermisoSerializer, SexoSerializer,
     TipoIdSerializer, TipoUsuarioSerializer, TokenPersonalizadoSerializer,
     UsuarioSerializer, UsuarioXPermisoSerializer,
@@ -150,6 +150,17 @@ class UsuarioXPermisoViewSet(viewsets.ModelViewSet):
         instance.delete()
         revocar_tokens_de(instance.usuario)  # los tokens vigentes llevan los roles anteriores
         auditoria.registrar(self.request, 'rol.quitar', 'Usuario', usuario_id, detalle)
+
+
+class AuditoriaViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    """Bitácora de solo lectura (RNF-25): Auditor y Administrador."""
+    queryset = Auditoria.objects.select_related('usuario').order_by('-fecha')
+    serializer_class = AuditoriaSerializer
+    permission_classes = [PermisoPorAccion]
+    accion_lectura = 'auditoria.ver'
+    filterset_fields = {'accion': ['exact', 'startswith'], 'entidad': ['exact'], 'entidad_id': ['exact'],
+                        'usuario': ['exact'], 'exito': ['exact'], 'fecha': ['gte', 'lte']}
+    search_fields = ['username', 'accion', 'entidad_id', 'ip']
 
 
 # ─────────────────────────────────────────────────────────────────────────────

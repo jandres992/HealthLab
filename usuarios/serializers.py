@@ -13,7 +13,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from .acciones import acciones_de
 from .models import (
-    Departamento, DispositivoConfianza, Municipio, Permiso, Sexo,
+    Auditoria, Departamento, DispositivoConfianza, Municipio, Permiso, Sexo,
     TipoId, TipoUsuario, Usuario, UsuarioXPermiso,
 )
 from .roles import ETIQUETAS, roles_de
@@ -185,6 +185,13 @@ class PerfilPropioSerializer(serializers.ModelSerializer):
     @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_acciones(self, obj):
         return acciones_de(obj)
+
+
+class AuditoriaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Auditoria
+        fields = ['id', 'fecha', 'usuario', 'username', 'roles', 'accion', 'entidad', 'entidad_id', 'detalle', 'exito', 'ip', 'device_id']
+        read_only_fields = fields
 
 
 class LogoutSerializer(serializers.Serializer):

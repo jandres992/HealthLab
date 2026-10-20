@@ -2,7 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from .views import (
-    CambioContrasenaView, DepartamentoViewSet, DispositivoConfianzaViewSet,
+    AuditoriaViewSet, CambioContrasenaView, DepartamentoViewSet, DispositivoConfianzaViewSet,
     LoginPersonalizadoView, LogoutView, MunicipioViewSet, PerfilPropioView,
     PermisoViewSet, RefrescarTokenView, SexoViewSet, TipoIdViewSet,
     TipoUsuarioViewSet, UsuarioViewSet, UsuarioXPermisoViewSet,
@@ -18,6 +18,7 @@ router.register(r'tipos-usuario', TipoUsuarioViewSet, basename='tipos-usuario')
 router.register(r'permisos', PermisoViewSet, basename='permisos')
 router.register(r'usuarios-permisos', UsuarioXPermisoViewSet, basename='usuarios-permisos')
 router.register(r'dispositivos-confianza', DispositivoConfianzaViewSet, basename='dispositivos-confianza')
+router.register(r'auditoria', AuditoriaViewSet, basename='auditoria')
 
 urlpatterns = [
     path('login/', LoginPersonalizadoView.as_view(), name='token_obtain_pair'),
