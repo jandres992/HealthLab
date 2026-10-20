@@ -191,7 +191,7 @@ def generar_pdf_orden(orden, preliminar=False):
         # En preliminar mostramos todo lo que tenga al menos un resultado
         examenes = orden.examenes_solicitados.filter(resultados__isnull=False).distinct().prefetch_related('resultados__parametro')
     else:
-        examenes = orden.examenes_solicitados.filter(estado_examen__nombre='Validado').prefetch_related('resultados__parametro')
+        examenes = orden.examenes_solicitados.filter(estado_examen__nombre__in=['Validado', 'Anulado']).select_related('validado_por', 'estado_examen', 'cups').prefetch_related('resultados__parametro')
     
     if not examenes.exists():
         story.append(Paragraph("<i>No hay estudios validados para mostrar en este informe.</i>", val_style))
@@ -228,12 +228,26 @@ def generar_pdf_orden(orden, preliminar=False):
             story.append(t_res)
             if ex.motivo_rechazo:
                 story.append(Paragraph(f"Nota: {ex.motivo_rechazo}", val_style))
+            if getattr(ex, 'motivo_anulacion', None):
+                story.append(Paragraph(f"ANULADO: {ex.motivo_anulacion}", val_style))
 
     # ─── PIE DE PÁGINA ───
     story.append(Spacer(1, 2*cm))
     if not preliminar:
-        story.append(HRFlowable(width="30%", thickness=1, color=colors.black, alignment=TA_LEFT))
-        story.append(Paragraph("Firma Electrónica - Bacteriólogo Responsable", val_style))
+        validadores = {}
+        for ex in examenes:
+            if ex.validado_por_id:
+                u = ex.validado_por
+                validadores[u.pk] = (u.nombre_completo, u.registro_profesional or 'N/A', ex.fecha_validacion)
+        story.append(HRFlowable(width="30%", thickness=1, color=colors.black, hAlign='LEFT'))
+        if validadores:
+            for nombre, registro, fecha in validadores.values():
+                fecha_txt = fecha.strftime('%d/%m/%Y %H:%M') if fecha else ''
+                story.append(Paragraph(
+                    f"Firma electrónica: <b>{nombre}</b> — Bacteriólogo(a) — Registro profesional {registro} — Validado el {fecha_txt}",
+                    val_style))
+        else:
+            story.append(Paragraph("Firma Electrónica - Bacteriólogo Responsable", val_style))
     else:
         story.append(Paragraph("<b>DOCUMENTO PRELIMINAR - PENDIENTE DE VALIDACIÓN FINAL</b>", ParagraphStyle('Warn', parent=val_style, textColor=colors.red)))
         

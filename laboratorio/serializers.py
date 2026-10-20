@@ -1,336 +1,292 @@
 """
-Serializers del módulo laboratorio — HealthLab LIMS.
-Cubre las fases 1-6 del flujo clínico.
-"""
-import datetime
-import uuid
-from decimal import Decimal, InvalidOperation
+Serializadores del módulo laboratorio.
 
+- Campos explícitos en toda entidad clínica (RNF-38).
+- Los estados son de solo lectura: solo cambian por acciones de negocio (RN-23).
+- Los serializadores de escritura (`*CrearSerializer`) validan formato; las
+  reglas clínicas viven en services/ y domain/.
+"""
 from rest_framework import serializers
 
 from .models import (
-    CatalogoCups,
-    ConfiguracionEquipo,
-    EstadoExamen,
-    EstadoMuestra,
-    EstadoOrden,
-    ExamenSolicitado,
-    InformeResultados,
-    LecturaEquipoSerial,
-    MuestraFisica,
-    Notificacion,
-    OrdenLaboratorio,
-    Paciente,
-    ParametroExamen,
-    ResultadoAnalito,
-    SexoBiologico,
-    TipoDocumentoPaciente,
+    CatalogoCups, ConfiguracionEquipo, EstadoExamen, EstadoMuestra, EstadoOrden,
+    ExamenSolicitado, InformeResultados, LecturaEquipoSerial, MuestraFisica,
+    Notificacion, OrdenLaboratorio, Paciente, ParametroExamen, ResultadoAnalito,
+    SexoBiologico, TipoDocumentoPaciente,
 )
-from .utils import es_anormal
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Catálogos de dominio
+# Catálogos
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TipoDocumentoPacienteSerializer(serializers.ModelSerializer):
     class Meta:
         model = TipoDocumentoPaciente
-        fields = '__all__'
+        fields = ['id', 'codigo', 'descripcion', 'activo']
 
 
 class SexoBiologicoSerializer(serializers.ModelSerializer):
     class Meta:
         model = SexoBiologico
-        fields = '__all__'
+        fields = ['id', 'codigo', 'descripcion']
 
 
 class EstadoOrdenSerializer(serializers.ModelSerializer):
     class Meta:
         model = EstadoOrden
-        fields = '__all__'
+        fields = ['id', 'nombre', 'descripcion']
 
 
 class EstadoExamenSerializer(serializers.ModelSerializer):
     class Meta:
         model = EstadoExamen
-        fields = '__all__'
+        fields = ['id', 'nombre', 'descripcion', 'es_final']
 
 
 class EstadoMuestraSerializer(serializers.ModelSerializer):
     class Meta:
         model = EstadoMuestra
-        fields = '__all__'
+        fields = ['id', 'nombre', 'descripcion']
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# FASE 1 — Catálogos y configuración
-# ─────────────────────────────────────────────────────────────────────────────
 
 class CatalogoCupsSerializer(serializers.ModelSerializer):
     class Meta:
         model = CatalogoCups
-        fields = '__all__'
+        fields = ['id', 'codigo_cups', 'descripcion', 'activo']
 
 
 class ParametroExamenSerializer(serializers.ModelSerializer):
-    """
-    Permite enviar el sexo_aplica como código (ej: 'M', 'F') o como PK.
-    Expone todos los campos nuevos de segmentación por sexo/edad y pánico.
-    """
-    sexo_aplica = serializers.SlugRelatedField(
-        slug_field='codigo',
-        queryset=SexoBiologico.objects.all(),
-        required=False,
-        allow_null=True,
-    )
+    sexo_aplica = serializers.SlugRelatedField(slug_field='codigo', queryset=SexoBiologico.objects.all(),
+                                               required=False, allow_null=True)
+    cups_codigo = serializers.ReadOnlyField(source='cups.codigo_cups')
 
     class Meta:
         model = ParametroExamen
-        fields = '__all__'
+        fields = ['id', 'cups', 'cups_codigo', 'nombre_parametro', 'unidades_medida',
+                  'rango_referencia_minimo', 'rango_referencia_maximo', 'rango_texto',
+                  'rango_panico_minimo', 'rango_panico_maximo',
+                  'sexo_aplica', 'edad_minima_anios', 'edad_maxima_anios', 'activo', 'version']
+        read_only_fields = ['id', 'version']
 
 
 class ConfiguracionEquipoSerializer(serializers.ModelSerializer):
+    """El token nunca se devuelve: solo lo entrega `regenerar-token` (RF-13.3)."""
     class Meta:
         model = ConfiguracionEquipo
-        fields = '__all__'
-        extra_kwargs = {
-            'token_middleware': {'write_only': True},
-        }
+        fields = ['id', 'nombre', 'codigo_equipo', 'tipo_conexion', 'host_ip', 'puerto',
+                  'protocolo', 'activo', 'descripcion', 'endpoint_destino']
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# FASE 2 — Pacientes y órdenes
+# Pacientes
 # ─────────────────────────────────────────────────────────────────────────────
 
 class PacienteSerializer(serializers.ModelSerializer):
-    tipo_documento = serializers.SlugRelatedField(
-        slug_field='codigo',
-        queryset=TipoDocumentoPaciente.objects.filter(activo=True),
-    )
-    sexo_biologico = serializers.SlugRelatedField(
-        slug_field='codigo',
-        queryset=SexoBiologico.objects.all(),
-    )
+    tipo_documento = serializers.SlugRelatedField(slug_field='codigo',
+                                                  queryset=TipoDocumentoPaciente.objects.filter(activo=True))
+    sexo_biologico = serializers.SlugRelatedField(slug_field='codigo', queryset=SexoBiologico.objects.all())
+    nombre_completo = serializers.ReadOnlyField()
 
     class Meta:
         model = Paciente
-        fields = [
-            'id', 'tipo_documento', 'numero_documento', 'primer_nombre', 
-            'segundo_nombre', 'primer_apellido', 'segundo_apellido', 
-            'fecha_nacimiento', 'sexo_biologico', 'telefono', 
-            'correo_electronico', 'municipio_residencia', 
-            'departamento_residencia', 'regimen_salud', 
-            'consentimiento_habeas_data', 'activo', 'fecha_creacion'
-        ]
-        read_only_fields = ('id', 'fecha_creacion')
+        fields = ['id', 'tipo_documento', 'numero_documento', 'primer_nombre', 'segundo_nombre',
+                  'primer_apellido', 'segundo_apellido', 'nombre_completo', 'fecha_nacimiento',
+                  'sexo_biologico', 'telefono', 'correo_electronico', 'municipio_residencia',
+                  'departamento_residencia', 'regimen_salud', 'consentimiento_habeas_data',
+                  'activo', 'fecha_creacion', 'version']
+        read_only_fields = ['id', 'activo', 'fecha_creacion', 'version']
 
-
-class OrdenLaboratorioSerializer(serializers.ModelSerializer):
-    estado_general = serializers.SlugRelatedField(
-        slug_field='nombre',
-        queryset=EstadoOrden.objects.all(),
-        required=False,
-    )
-    # Campos de solo lectura para presentación enriquecida
-    paciente_nombre = serializers.SerializerMethodField(read_only=True)
-    medico_nombre = serializers.SerializerMethodField(read_only=True)
-
-    class Meta:
-        model = OrdenLaboratorio
-        fields = [
-            'id', 'paciente', 'paciente_nombre', 'medico', 'medico_nombre',
-            'numero_orden', 'fecha_orden', 'fecha_admision', 'usuario_admite',
-            'observaciones_clinicas', 'codigo_cie10', 'entidad_remitente',
-            'convenio', 'finalidad_consulta', 'causa_externa', 
-            'tipo_diagnostico', 'estado_general'
-        ]
-        read_only_fields = ('id', 'fecha_orden', 'paciente_nombre', 'medico_nombre')
-
-    def get_paciente_nombre(self, obj):
-        return f"{obj.paciente.primer_nombre} {obj.paciente.primer_apellido}"
-
-    def get_medico_nombre(self, obj):
-        if not obj.medico:
-            return None
-        return (
-            f"{obj.medico.p_nombre or ''} {obj.medico.p_apellido or ''}".strip()
-            or obj.medico.username
-        )
-
-    def create(self, validated_data):
-        # Auto-generar numero_orden si no se proporciona
-        if not validated_data.get('numero_orden'):
-            hoy = datetime.date.today()
-            prefijo = f"LAB-{hoy.strftime('%Y%m%d')}-"
-            count = OrdenLaboratorio.objects.filter(numero_orden__startswith=prefijo).count()
-            validated_data['numero_orden'] = f"{prefijo}{count + 1:04d}"
-        # Estado por defecto: Registrada
-        if not validated_data.get('estado_general'):
-            validated_data['estado_general'] = EstadoOrden.objects.get(nombre='Registrada')
-        return super().create(validated_data)
+    def validate_consentimiento_habeas_data(self, valor):
+        if self.instance is None and not valor:
+            raise serializers.ValidationError('Debe registrarse la aceptación del tratamiento de datos (Ley 1581 de 2012).')
+        return valor
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# FASE 3 — Muestras físicas
-# ─────────────────────────────────────────────────────────────────────────────
-
-class MuestraFisicaSerializer(serializers.ModelSerializer):
-    codigo_barras = serializers.CharField(max_length=50, required=False)
-    estado_muestra = serializers.SlugRelatedField(
-        slug_field='nombre',
-        queryset=EstadoMuestra.objects.all(),
-        required=False,
-        allow_null=True,
-    )
-    estado_muestra_nombre = serializers.SerializerMethodField(read_only=True)
-
-    class Meta:
-        model = MuestraFisica
-        fields = '__all__'
-        read_only_fields = ('id', 'estado_muestra_nombre')
-
-    def get_estado_muestra_nombre(self, obj):
-        return obj.estado_muestra.nombre if obj.estado_muestra else None
-
-    def create(self, validated_data):
-        if not validated_data.get('codigo_barras'):
-            validated_data['codigo_barras'] = f"MUE-{uuid.uuid4().hex[:12].upper()}"
-        # Estado inicial: Recolectada
-        if not validated_data.get('estado_muestra'):
-            try:
-                validated_data['estado_muestra'] = EstadoMuestra.objects.get(nombre='Recolectada')
-            except EstadoMuestra.DoesNotExist:
-                pass
-        return super().create(validated_data)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# FASES 4 & 5 — Exámenes, lecturas seriales y resultados
+# Exámenes (lectura) y órdenes
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ExamenSolicitadoSerializer(serializers.ModelSerializer):
-    estado_examen = serializers.SlugRelatedField(
-        slug_field='nombre',
-        queryset=EstadoExamen.objects.all(),
-        required=False,
-    )
-    estado_examen_nombre = serializers.SerializerMethodField(read_only=True)
-    validado_por_username = serializers.SerializerMethodField(read_only=True)
+    estado_examen = serializers.ReadOnlyField(source='estado_examen.nombre')
+    estado_examen_nombre = serializers.ReadOnlyField(source='estado_examen.nombre')  # compatibilidad app Expo
+    es_final = serializers.ReadOnlyField(source='estado_examen.es_final')
+    cups_codigo = serializers.ReadOnlyField(source='cups.codigo_cups')
+    cups_descripcion = serializers.ReadOnlyField(source='cups.descripcion')
     orden_numero = serializers.ReadOnlyField(source='orden.numero_orden')
-    codigo_barras = serializers.ReadOnlyField(source='orden.muestras_fisicas.first.codigo_barras')
+    codigo_barras = serializers.ReadOnlyField(source='muestra.codigo_barras')
+    paciente_nombre = serializers.SerializerMethodField()
+    paciente_documento = serializers.ReadOnlyField(source='orden.paciente.numero_documento')
+    validado_por_username = serializers.ReadOnlyField(source='validado_por.username')
+    validado_por_nombre = serializers.ReadOnlyField(source='validado_por.nombre_completo')
+    validado_por_registro = serializers.ReadOnlyField(source='validado_por.registro_profesional')
 
     class Meta:
         model = ExamenSolicitado
-        fields = '__all__'
-        read_only_fields = ('id', 'estado_examen_nombre', 'validado_por_username')
-
-    def get_estado_examen_nombre(self, obj):
-        return obj.estado_examen.nombre if obj.estado_examen else None
-
-    def get_validado_por_username(self, obj):
-        return obj.validado_por.username if obj.validado_por else None
-
-    cups_descripcion = serializers.ReadOnlyField(source='cups.descripcion')
-    paciente_nombre = serializers.SerializerMethodField()
+        fields = ['id', 'orden', 'orden_numero', 'cups', 'cups_codigo', 'cups_descripcion', 'muestra',
+                  'codigo_barras', 'estado_examen', 'estado_examen_nombre', 'es_final',
+                  'paciente_nombre', 'paciente_documento',
+                  'validado_por', 'validado_por_username', 'validado_por_nombre', 'validado_por_registro',
+                  'fecha_validacion', 'motivo_rechazo', 'fecha_rechazo',
+                  'motivo_anulacion', 'fecha_anulacion', 'version']
+        read_only_fields = [f for f in fields if f not in ('orden', 'cups')]
 
     def get_paciente_nombre(self, obj):
-        p = obj.orden.paciente
-        return f"{p.primer_nombre} {p.primer_apellido}"
+        return obj.orden.paciente.nombre_completo
 
-    paciente_documento = serializers.ReadOnlyField(source='orden.paciente.numero_documento')
 
-    def create(self, validated_data):
-        if not validated_data.get('estado_examen'):
-            validated_data['estado_examen'] = EstadoExamen.objects.get(nombre='Pendiente')
-        return super().create(validated_data)
+class OrdenLaboratorioSerializer(serializers.ModelSerializer):
+    """Lectura de una orden con sus exámenes."""
+    estado_general = serializers.ReadOnlyField(source='estado_general.nombre')
+    paciente_nombre = serializers.ReadOnlyField(source='paciente.nombre_completo')
+    paciente_documento = serializers.ReadOnlyField(source='paciente.numero_documento')
+    medico_nombre = serializers.SerializerMethodField()
+    examenes = ExamenSolicitadoSerializer(source='examenes_solicitados', many=True, read_only=True)
 
+    class Meta:
+        model = OrdenLaboratorio
+        fields = ['id', 'numero_orden', 'paciente', 'paciente_nombre', 'paciente_documento',
+                  'medico', 'medico_nombre', 'fecha_orden', 'fecha_admision', 'usuario_admite',
+                  'observaciones_clinicas', 'codigo_cie10', 'entidad_remitente', 'convenio',
+                  'finalidad_consulta', 'causa_externa', 'tipo_diagnostico', 'estado_general',
+                  'fecha_finalizacion', 'finalizada_por', 'informe_pendiente', 'examenes', 'version']
+        read_only_fields = fields
+
+    def get_medico_nombre(self, obj):
+        return obj.medico.nombre_completo if obj.medico else None
+
+
+class OrdenCrearSerializer(serializers.Serializer):
+    """Creación de orden con sus exámenes en una sola petición (RNF-29.1)."""
+    paciente = serializers.PrimaryKeyRelatedField(queryset=Paciente.objects.filter(activo=True))
+    examenes = serializers.ListField(child=serializers.CharField(), allow_empty=False,
+                                     help_text='Lista de ids o códigos CUPS.')
+    observaciones_clinicas = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    codigo_cie10 = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=10)
+    entidad_remitente = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=200)
+    convenio = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=100)
+    finalidad_consulta = serializers.ChoiceField(choices=OrdenLaboratorio._meta.get_field('finalidad_consulta').choices, required=False)
+    causa_externa = serializers.ChoiceField(choices=OrdenLaboratorio._meta.get_field('causa_externa').choices, required=False)
+    tipo_diagnostico = serializers.ChoiceField(choices=OrdenLaboratorio._meta.get_field('tipo_diagnostico').choices, required=False)
+    numero_orden = serializers.CharField(required=False, allow_blank=True, max_length=30)
+
+
+class OrdenEditarSerializer(serializers.ModelSerializer):
+    """Campos editables por el médico mientras la orden está Registrada."""
+    class Meta:
+        model = OrdenLaboratorio
+        fields = ['observaciones_clinicas', 'codigo_cie10', 'entidad_remitente', 'convenio',
+                  'finalidad_consulta', 'causa_externa', 'tipo_diagnostico']
+
+
+class ExamenAgregarSerializer(serializers.Serializer):
+    """Agregar un examen a una orden abierta."""
+    orden = serializers.PrimaryKeyRelatedField(queryset=OrdenLaboratorio.objects.all())
+    cups = serializers.PrimaryKeyRelatedField(queryset=CatalogoCups.objects.filter(activo=True))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Muestras
+# ─────────────────────────────────────────────────────────────────────────────
+
+class MuestraFisicaSerializer(serializers.ModelSerializer):
+    estado_muestra = serializers.ReadOnlyField(source='estado_muestra.nombre')
+    estado_muestra_nombre = serializers.ReadOnlyField(source='estado_muestra.nombre')  # compatibilidad
+    orden_numero = serializers.ReadOnlyField(source='orden.numero_orden')
+    paciente_nombre = serializers.ReadOnlyField(source='orden.paciente.nombre_completo')
+    usuario_recolecta_username = serializers.ReadOnlyField(source='usuario_recolecta.username')
+    examenes = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
+
+    class Meta:
+        model = MuestraFisica
+        fields = ['id', 'orden', 'orden_numero', 'paciente_nombre', 'codigo_barras', 'tipo_muestra',
+                  'fecha_recoleccion', 'estado_muestra', 'estado_muestra_nombre', 'usuario_recolecta',
+                  'usuario_recolecta_username', 'condicion_muestra', 'motivo_rechazo',
+                  'fecha_recepcion', 'recibida_por', 'fecha_rechazo', 'rechazada_por', 'examenes', 'version']
+        read_only_fields = fields
+
+
+class MuestraCrearSerializer(serializers.Serializer):
+    orden = serializers.PrimaryKeyRelatedField(queryset=OrdenLaboratorio.objects.all())
+    tipo_muestra = serializers.CharField(max_length=50)
+    codigo_barras = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    fecha_recoleccion = serializers.DateTimeField(required=False)
+    condicion_muestra = serializers.ChoiceField(choices=MuestraFisica.CONDICION_CHOICES, required=False)
+    examenes = serializers.ListField(child=serializers.UUIDField(), required=False,
+                                     help_text='Ids de exámenes a vincular; vacío = todos los pendientes o en Repetir.')
+
+    def validate_codigo_barras(self, valor):
+        valor = (valor or '').strip()
+        if valor and MuestraFisica.objects.filter(codigo_barras=valor).exists():
+            raise serializers.ValidationError('Ya existe una muestra con ese código de barras.')
+        return valor
+
+
+class RechazoSerializer(serializers.Serializer):
+    motivo_rechazo = serializers.CharField()
+    condicion_muestra = serializers.ChoiceField(choices=MuestraFisica.CONDICION_CHOICES, required=False)
+
+
+class MotivoSerializer(serializers.Serializer):
+    motivo = serializers.CharField()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Lecturas y resultados
+# ─────────────────────────────────────────────────────────────────────────────
 
 class LecturaEquipoSerialSerializer(serializers.ModelSerializer):
     class Meta:
         model = LecturaEquipoSerial
-        fields = '__all__'
-        read_only_fields = ('id', 'fecha_recepcion')
+        fields = ['id', 'equipo_origen', 'codigo_barras_leido', 'fecha_recepcion', 'trama_cruda',
+                  'datos_json', 'procesado', 'procesada_por', 'fecha_procesamiento']
+        read_only_fields = ['id', 'fecha_recepcion', 'procesado', 'procesada_por', 'fecha_procesamiento']
 
 
 class ResultadoAnalitoSerializer(serializers.ModelSerializer):
-    es_critico = serializers.BooleanField(read_only=True)
+    parametro_nombre = serializers.ReadOnlyField(source='parametro.nombre_parametro')
+    unidades = serializers.ReadOnlyField(source='unidades_aplicadas')
+    examen_estado = serializers.ReadOnlyField(source='examen_solicitado.estado_examen.nombre')
+    orden = serializers.ReadOnlyField(source='examen_solicitado.orden_id')
 
     class Meta:
         model = ResultadoAnalito
-        fields = '__all__'
-        read_only_fields = ('id', 'fecha_procesamiento', 'es_anormal', 'es_critico')
+        fields = ['id', 'examen_solicitado', 'examen_estado', 'orden', 'parametro', 'parametro_nombre',
+                  'muestra', 'lectura_serial', 'valor_resultado', 'valor_numerico', 'es_anormal', 'es_critico',
+                  'unidades', 'unidades_aplicadas', 'rango_min_aplicado', 'rango_max_aplicado',
+                  'rango_texto_aplicado', 'parametro_version', 'comentario_bacteriologo',
+                  'registrado_por', 'fecha_procesamiento', 'version']
+        read_only_fields = fields
 
-    parametro_nombre = serializers.ReadOnlyField(source='parametro.nombre_parametro')
-    unidades = serializers.ReadOnlyField(source='parametro.unidades_medida')
 
-    def _calcular_flags(self, parametro, valor_resultado, examen_solicitado=None):
-        """
-        Calcula es_anormal y es_critico. Si hay examen asociado, intenta usar
-        el rango específico para el sexo/edad del paciente.
-        """
-        parametro_efectivo = parametro
-        if examen_solicitado and parametro:
-            from .utils import obtener_parametro_para_paciente  # noqa: PLC0415
-            try:
-                paciente = examen_solicitado.orden.paciente
-                p = obtener_parametro_para_paciente(
-                    parametro.cups_id, parametro.nombre_parametro, paciente
-                )
-                if p:
-                    parametro_efectivo = p
-            except Exception:
-                pass
-        if parametro_efectivo is None:
-            return False, False
-        return es_anormal(parametro_efectivo, valor_resultado)
-
-    def create(self, validated_data):
-        param = validated_data.get('parametro')
-        valor = validated_data.get('valor_resultado')
-        examen = validated_data.get('examen_solicitado')
-        anormal, critico = self._calcular_flags(param, valor, examen)
-        validated_data['es_anormal'] = anormal
-        validated_data['es_critico'] = critico
-        return super().create(validated_data)
-
-    def update(self, instance, validated_data):
-        param = validated_data.get('parametro', instance.parametro)
-        valor = validated_data.get('valor_resultado', instance.valor_resultado)
-        examen = validated_data.get('examen_solicitado', instance.examen_solicitado)
-        anormal, critico = self._calcular_flags(param, valor, examen)
-        validated_data['es_anormal'] = anormal
-        validated_data['es_critico'] = critico
-        return super().update(instance, validated_data)
+class ResultadoRegistrarSerializer(serializers.Serializer):
+    examen_solicitado = serializers.PrimaryKeyRelatedField(queryset=ExamenSolicitado.objects.all())
+    parametro = serializers.PrimaryKeyRelatedField(queryset=ParametroExamen.objects.filter(activo=True))
+    valor_resultado = serializers.CharField(max_length=100)
+    comentario_bacteriologo = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# FASE 6 — Informes y notificaciones
+# Informes y notificaciones
 # ─────────────────────────────────────────────────────────────────────────────
 
 class InformeResultadosSerializer(serializers.ModelSerializer):
-    orden_numero = serializers.SerializerMethodField(read_only=True)
-    generado_por_username = serializers.SerializerMethodField(read_only=True)
+    orden_numero = serializers.ReadOnlyField(source='orden.numero_orden')
+    generado_por_username = serializers.ReadOnlyField(source='generado_por.username')
 
     class Meta:
         model = InformeResultados
-        fields = '__all__'
-        read_only_fields = ('id', 'fecha_generacion', 'hash_documento', 'orden_numero', 'generado_por_username')
-
-    def get_orden_numero(self, obj):
-        return obj.orden.numero_orden
-
-    def get_generado_por_username(self, obj):
-        return obj.generado_por.username if obj.generado_por else None
+        fields = ['id', 'orden', 'orden_numero', 'tipo', 'vigente', 'archivo_pdf', 'fecha_generacion',
+                  'generado_por', 'generado_por_username', 'hash_documento', 'hash_anterior', 'motivo']
+        read_only_fields = fields
 
 
 class NotificacionSerializer(serializers.ModelSerializer):
-    destinatario_username = serializers.SerializerMethodField(read_only=True)
+    destinatario_username = serializers.ReadOnlyField(source='destinatario.username')
+    orden_numero = serializers.ReadOnlyField(source='orden.numero_orden')
 
     class Meta:
         model = Notificacion
-        fields = '__all__'
-        read_only_fields = ('id', 'fecha_creacion', 'destinatario_username')
-
-    def get_destinatario_username(self, obj):
-        return obj.destinatario.username
+        fields = ['id', 'destinatario', 'destinatario_username', 'orden', 'orden_numero', 'tipo',
+                  'mensaje', 'leida', 'fecha_creacion', 'fecha_lectura']
+        read_only_fields = fields

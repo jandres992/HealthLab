@@ -264,10 +264,11 @@ class Command(BaseCommand):
         sexo_m = SexoBiologico.objects.get(codigo='M')
 
         # ── Estados de orden ──────────────────────────────────────────────────
+        # Estados de orden de §5.3; los demás se conservan por compatibilidad con datos previos
         estados_orden_data = [
-            "Registrada", "En Toma de Muestra", "Muestra Recolectada",
-            "En Proceso", "Pendiente Validacion", "Validada", "Finalizada",
-            "Reportada", "Entregada", "Anulada",
+            "Registrada", "En Proceso", "Resultados Parciales", "Finalizada", "Anulada",
+            "En Toma de Muestra", "Muestra Recolectada", "Pendiente Validacion",
+            "Validada", "Reportada", "Entregada",
         ]
         estados_orden = []
         for nombre in estados_orden_data:
@@ -281,10 +282,14 @@ class Command(BaseCommand):
             "Pendiente", "Muestra Recolectada", "En Análisis", "Validado",
             "Reportado", "Entregado", "Repetir", "Anulado", "En Espera", "Archivado",
         ]
+        # RN-10.1: Validado y Anulado son finales; Repetir NO (mantiene la orden abierta)
+        estados_examen_finales = {"Validado", "Anulado", "Reportado", "Entregado", "Archivado"}
         estados_examen = []
         for nombre in estados_examen_data:
             obj, _ = EstadoExamen.objects.update_or_create(
-                nombre=nombre, defaults={"descripcion": f"Estado de examen: {nombre}"}
+                nombre=nombre,
+                defaults={"descripcion": f"Estado de examen: {nombre}",
+                          "es_final": nombre in estados_examen_finales},
             )
             estados_examen.append(obj)
 

@@ -1,250 +1,182 @@
 """
-Views del módulo laboratorio — HealthLab LIMS.
-Implementa los flujos clínicos de las fases 1-6.
+Vistas del módulo laboratorio — ViewSets delgados (RNF-38.1).
+
+Cada vista: permiso por acción (matriz §8.1) + serializador + llamada a un
+servicio. Ninguna regla clínica vive aquí. Las respuestas de creación,
+detalle y actualización conservan la envoltura {estado, mensaje, datos} que
+espera la app Expo durante la transición.
 """
 import csv
-import hashlib
-import logging
 import secrets
 
-from django.core.files.base import ContentFile
-from django.http import Http404, HttpResponse
+from django.db import transaction
+from django.db.models import ProtectedError
+from django.http import HttpResponse
 from django.utils import timezone
-from rest_framework import status, viewsets
+from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 
-from django.db.models import ProtectedError, Q
+from usuarios import auditoria
+from usuarios.permissions import PermisoPorAccion
 
+from .domain import estados as E
+from .domain.errores import ErrorDeDominio, ErrorDeValidacion
 from .models import (
-    CatalogoCups,
-    ConfiguracionEquipo,
-    EstadoExamen,
-    EstadoMuestra,
-    EstadoOrden,
-    ExamenSolicitado,
-    InformeResultados,
-    LecturaEquipoSerial,
-    MuestraFisica,
-    Notificacion,
-    OrdenLaboratorio,
-    Paciente,
-    ParametroExamen,
-    ResultadoAnalito,
-    SexoBiologico,
-    TipoDocumentoPaciente,
+    CatalogoCups, ConfiguracionEquipo, EstadoExamen, EstadoMuestra, EstadoOrden,
+    ExamenSolicitado, InformeResultados, LecturaEquipoSerial, MuestraFisica,
+    Notificacion, OrdenLaboratorio, Paciente, ParametroExamen, ResultadoAnalito,
+    SexoBiologico, TipoDocumentoPaciente,
 )
+from .permissions import PermisoIngestaLecturas
 from .serializers import (
-    CatalogoCupsSerializer,
-    ConfiguracionEquipoSerializer,
-    EstadoExamenSerializer,
-    EstadoMuestraSerializer,
-    EstadoOrdenSerializer,
-    ExamenSolicitadoSerializer,
-    InformeResultadosSerializer,
-    LecturaEquipoSerialSerializer,
-    MuestraFisicaSerializer,
-    NotificacionSerializer,
-    OrdenLaboratorioSerializer,
-    PacienteSerializer,
-    ParametroExamenSerializer,
-    ResultadoAnalitoSerializer,
-    SexoBiologicoSerializer,
-    TipoDocumentoPacienteSerializer,
+    CatalogoCupsSerializer, ConfiguracionEquipoSerializer, EstadoExamenSerializer,
+    EstadoMuestraSerializer, EstadoOrdenSerializer, ExamenAgregarSerializer,
+    ExamenSolicitadoSerializer, InformeResultadosSerializer, LecturaEquipoSerialSerializer,
+    MotivoSerializer, MuestraCrearSerializer, MuestraFisicaSerializer, NotificacionSerializer,
+    OrdenCrearSerializer, OrdenEditarSerializer, OrdenLaboratorioSerializer, PacienteSerializer,
+    ParametroExamenSerializer, RechazoSerializer, ResultadoAnalitoSerializer,
+    ResultadoRegistrarSerializer, SexoBiologicoSerializer, TipoDocumentoPacienteSerializer,
 )
-from .permissions import LaboratorioRolPermission
-from .utils import (
-    buscar_valor_parametro,
-    es_anormal,
-    generar_pdf_orden,
-    obtener_parametro_para_paciente,
-)
-
-logger = logging.getLogger(__name__)
+from .services import examenes as svc_examenes
+from .services import informes as svc_informes
+from .services import muestras as svc_muestras
+from .services import ordenes as svc_ordenes
+from .services import pacientes as svc_pacientes
+from .services import resultados as svc_resultados
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Helper de notificaciones internas
-# ─────────────────────────────────────────────────────────────────────────────
+def exito(mensaje=None, datos=None, codigo=status.HTTP_200_OK, **extra):
+    cuerpo = {'estado': 'exito'}
+    if mensaje:
+        cuerpo['mensaje'] = mensaje
+    if datos is not None:
+        cuerpo['datos'] = datos
+    cuerpo.update(extra)
+    return Response(cuerpo, status=codigo)
 
-def _crear_notificacion(destinatario, tipo, mensaje, orden=None):
-    """Crea una notificación interna si el usuario las tiene habilitadas."""
-    try:
-        if destinatario and getattr(destinatario, 'recibir_notificaciones', True):
-            Notificacion.objects.create(
-                destinatario=destinatario,
-                tipo=tipo,
-                mensaje=mensaje,
-                orden=orden,
-            )
-    except Exception as exc:
-        logger.warning("No se pudo crear notificación: %s", exc)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# ViewSet base con respuestas estandarizadas
-# ─────────────────────────────────────────────────────────────────────────────
 
 class EstandarRespuestaViewSet(viewsets.ModelViewSet):
-    """
-    Clase base que estandariza las respuestas de la API.
-    Estructura de respuesta: { "estado": ..., "mensaje": ..., "datos/errores": ... }
-    """
-    permission_classes = [LaboratorioRolPermission]
+    """Envoltura estándar en create/retrieve/update; los errores los maneja el handler global."""
+    permission_classes = [PermisoPorAccion]
 
     def create(self, request, *args, **kwargs):
-        try:
-            serializer = self.get_serializer(data=request.data)
-            if serializer.is_valid():
-                self.perform_create(serializer)
-                return Response(
-                    {'estado': 'exito', 'mensaje': 'Registro creado correctamente.', 'datos': serializer.data},
-                    status=status.HTTP_201_CREATED,
-                )
-            return Response(
-                {'estado': 'error_validacion', 'mensaje': 'Los datos enviados no son válidos.', 'errores': serializer.errors},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        except Exception as e:
-            logger.error("Error 500 al crear: %s", str(e))
-            return Response(
-                {'estado': 'error_servidor', 'mensaje': 'Error interno al intentar guardar el registro.', 'detalle': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        return exito('Registro creado correctamente.', serializer.data, status.HTTP_201_CREATED)
 
     def retrieve(self, request, *args, **kwargs):
-        try:
-            instance = self.get_object()
-            serializer = self.get_serializer(instance)
-            return Response({'estado': 'exito', 'datos': serializer.data}, status=status.HTTP_200_OK)
-        except Http404:
-            return Response(
-                {'estado': 'no_encontrado', 'mensaje': 'El registro solicitado no existe.'},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        except Exception as e:
-            logger.error("Error 500 al recuperar: %s", str(e))
-            return Response(
-                {'estado': 'error_servidor', 'mensaje': 'Error interno al buscar el registro.'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+        return exito(datos=self.get_serializer(self.get_object()).data)
 
     def update(self, request, *args, **kwargs):
-        try:
-            partial = kwargs.pop('partial', False)
-            instance = self.get_object()
-            serializer = self.get_serializer(instance, data=request.data, partial=partial)
-            if serializer.is_valid():
-                self.perform_update(serializer)
-                return Response(
-                    {'estado': 'exito', 'mensaje': 'Registro actualizado correctamente.', 'datos': serializer.data},
-                    status=status.HTTP_200_OK,
-                )
-            return Response(
-                {'estado': 'error_validacion', 'mensaje': 'Error en los datos para actualización.', 'errores': serializer.errors},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        except Http404:
-            return Response(
-                {'estado': 'no_encontrado', 'mensaje': 'No se puede actualizar. El registro no existe.'},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        except Exception as e:
-            logger.error("Error 500 al actualizar: %s", str(e))
-            return Response(
-                {'estado': 'error_servidor', 'mensaje': 'Error interno al actualizar el registro.'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        return exito('Registro actualizado correctamente.', serializer.data)
 
     def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
         try:
-            instance = self.get_object()
             self.perform_destroy(instance)
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        except Http404:
-            return Response(
-                {'estado': 'no_encontrado', 'mensaje': 'No se puede eliminar. El registro no existe.'},
-                status=status.HTTP_404_NOT_FOUND,
-            )
         except ProtectedError:
-            return Response(
-                {'estado': 'conflicto', 'mensaje': 'No se puede eliminar: tiene información clínica vinculada.'},
-                status=status.HTTP_409_CONFLICT,
-            )
-        except Exception as e:
-            logger.error("Error 500 al eliminar: %s", str(e))
-            return Response(
-                {'estado': 'error_servidor', 'mensaje': 'Error interno al intentar eliminar el registro.'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            raise ErrorDeDominio('No se puede eliminar: tiene información clínica vinculada.')
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class CatalogoViewSet(EstandarRespuestaViewSet):
+    """Catálogos: lectura para todos los roles, escritura solo Administrador; borrado = desactivar."""
+    accion_lectura = 'catalogos.ver'
+    accion_escritura = 'catalogos.gestionar'
+
+    def perform_destroy(self, instance):
+        if hasattr(instance, 'activo'):
+            instance.activo = False
+            instance.save(update_fields=['activo'])
+        else:
+            instance.delete()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FASE 1 — Catálogos y configuración
 # ─────────────────────────────────────────────────────────────────────────────
 
-class CatalogoCupsViewSet(EstandarRespuestaViewSet):
-    queryset = CatalogoCups.objects.all().order_by('codigo_cups')
+class CatalogoCupsViewSet(CatalogoViewSet):
     serializer_class = CatalogoCupsSerializer
+    search_fields = ['codigo_cups', 'descripcion']
+    filterset_fields = ['activo']
+
+    def get_queryset(self):
+        qs = CatalogoCups.objects.all().order_by('codigo_cups')
+        if str(self.request.query_params.get('incluir_inactivos', 'false')).lower() != 'true':
+            qs = qs.filter(activo=True)
+        return qs
+
+
+class TipoDocumentoPacienteViewSet(CatalogoViewSet):
+    queryset = TipoDocumentoPaciente.objects.all().order_by('codigo')
+    serializer_class = TipoDocumentoPacienteSerializer
+
+
+class SexoBiologicoViewSet(CatalogoViewSet):
+    queryset = SexoBiologico.objects.all().order_by('codigo')
+    serializer_class = SexoBiologicoSerializer
+
+
+class EstadoOrdenViewSet(CatalogoViewSet):
+    queryset = EstadoOrden.objects.all().order_by('nombre')
+    serializer_class = EstadoOrdenSerializer
+
+
+class EstadoExamenViewSet(CatalogoViewSet):
+    queryset = EstadoExamen.objects.all().order_by('nombre')
+    serializer_class = EstadoExamenSerializer
+
+
+class EstadoMuestraViewSet(CatalogoViewSet):
+    queryset = EstadoMuestra.objects.all().order_by('nombre')
+    serializer_class = EstadoMuestraSerializer
 
 
 class ParametroExamenViewSet(EstandarRespuestaViewSet):
+    """Rangos de referencia: los define el Bacteriólogo (RF-13.2); con historial (RF-53)."""
     queryset = ParametroExamen.objects.select_related('cups', 'sexo_aplica').order_by('nombre_parametro')
     serializer_class = ParametroExamenSerializer
+    accion_lectura = 'parametros.ver'
+    accion_escritura = 'parametros.gestionar'
+    search_fields = ['nombre_parametro', 'cups__codigo_cups', 'cups__descripcion']
+    filterset_fields = ['activo', 'sexo_aplica']
 
     def get_queryset(self):
         qs = super().get_queryset()
         cups_query = self.request.query_params.get('cups')
         if cups_query:
-            if cups_query.isdigit():
-                # Si es numérico, intentamos filtrar por PK del catálogo
-                qs = qs.filter(cups_id=cups_query)
-            else:
-                # Si no, filtramos por el código CUPS (ej: 902207)
-                qs = qs.filter(cups__codigo_cups=cups_query)
+            qs = qs.filter(cups_id=cups_query) if cups_query.isdigit() else qs.filter(cups__codigo_cups=cups_query)
         return qs
+
+    def perform_destroy(self, instance):
+        instance.activo = False
+        instance.save(update_fields=['activo'])
 
 
 class ConfiguracionEquipoViewSet(EstandarRespuestaViewSet):
-    """FASE 1 — Administración de equipos analizadores y su configuración de conexión."""
     queryset = ConfiguracionEquipo.objects.all().order_by('nombre')
     serializer_class = ConfiguracionEquipoSerializer
+    accion_lectura = 'equipos.ver'
+    accion_escritura = 'equipos.gestionar'
+    acciones = {'regenerar_token': 'equipos.regenerar_token'}
 
     @action(detail=True, methods=['post'], url_path='regenerar-token')
     def regenerar_token(self, request, pk=None):
         equipo = self.get_object()
         equipo.token_middleware = secrets.token_urlsafe(32)
         equipo.save(update_fields=['token_middleware'])
-        return Response(
-            {'estado': 'exito', 'mensaje': 'Token de middleware regenerado.', 'token_middleware': equipo.token_middleware},
-            status=status.HTTP_200_OK,
-        )
-
-
-class TipoDocumentoPacienteViewSet(EstandarRespuestaViewSet):
-    queryset = TipoDocumentoPaciente.objects.all().order_by('codigo')
-    serializer_class = TipoDocumentoPacienteSerializer
-
-
-class SexoBiologicoViewSet(EstandarRespuestaViewSet):
-    queryset = SexoBiologico.objects.all().order_by('codigo')
-    serializer_class = SexoBiologicoSerializer
-
-
-class EstadoOrdenViewSet(EstandarRespuestaViewSet):
-    queryset = EstadoOrden.objects.all().order_by('nombre')
-    serializer_class = EstadoOrdenSerializer
-
-
-class EstadoExamenViewSet(EstandarRespuestaViewSet):
-    queryset = EstadoExamen.objects.all().order_by('nombre')
-    serializer_class = EstadoExamenSerializer
-
-
-class EstadoMuestraViewSet(EstandarRespuestaViewSet):
-    """FASE 3 — Catálogo de estados de muestra física."""
-    queryset = EstadoMuestra.objects.all().order_by('nombre')
-    serializer_class = EstadoMuestraSerializer
+        auditoria.registrar(request, 'equipo.regenerar_token', 'ConfiguracionEquipo', equipo.pk)
+        return exito('Token de middleware regenerado. Guárdelo: no se volverá a mostrar.',
+                     token_middleware=equipo.token_middleware)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -253,600 +185,309 @@ class EstadoMuestraViewSet(EstandarRespuestaViewSet):
 
 class PacienteViewSet(EstandarRespuestaViewSet):
     serializer_class = PacienteSerializer
+    acciones = {
+        'list': 'pacientes.ver', 'retrieve': 'pacientes.ver',
+        'create': 'pacientes.crear', 'update': 'pacientes.editar', 'partial_update': 'pacientes.editar',
+        'destroy': 'pacientes.desactivar',
+    }
+    search_fields = ['numero_documento', 'primer_nombre', 'segundo_nombre', 'primer_apellido', 'segundo_apellido']
+    filterset_fields = ['tipo_documento', 'sexo_biologico', 'regimen_salud']
 
     def get_queryset(self):
-        incluir_inactivos = str(self.request.query_params.get('incluir_inactivos', 'false')).lower() == 'true'
-        qs = Paciente.objects.all().order_by('-fecha_creacion')
-        return qs if incluir_inactivos else qs.filter(activo=True)
+        qs = Paciente.objects.select_related('tipo_documento', 'sexo_biologico').order_by('-fecha_creacion')
+        if str(self.request.query_params.get('incluir_inactivos', 'false')).lower() != 'true':
+            qs = qs.filter(activo=True)
+        return qs
+
+    def perform_create(self, serializer):
+        paciente = serializer.save()
+        auditoria.registrar(self.request, 'paciente.crear', 'Paciente', paciente.pk)
+
+    def perform_update(self, serializer):
+        paciente = serializer.save()
+        auditoria.registrar(self.request, 'paciente.editar', 'Paciente', paciente.pk,
+                            {'campos': sorted(serializer.validated_data)})
+
+    def retrieve(self, request, *args, **kwargs):
+        paciente = self.get_object()
+        auditoria.registrar(request, 'paciente.consultar', 'Paciente', paciente.pk)
+        return exito(datos=self.get_serializer(paciente).data)
 
     def destroy(self, request, *args, **kwargs):
-        try:
-            paciente = self.get_object()
-            paciente.activo = False
-            paciente.save(update_fields=['activo'])
-            return Response(
-                {'estado': 'exito', 'mensaje': 'Paciente desactivado correctamente (eliminación lógica).'},
-                status=status.HTTP_200_OK,
-            )
-        except Http404:
-            return Response(
-                {'estado': 'no_encontrado', 'mensaje': 'El paciente no existe.'},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        except Exception as e:
-            logger.error("Error al desactivar paciente: %s", str(e))
-            return Response(
-                {'estado': 'error_servidor', 'mensaje': 'Error interno al desactivar el paciente.'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+        svc_pacientes.desactivar_paciente(request.user, kwargs['pk'], request=request)
+        return exito('Paciente desactivado correctamente (eliminación lógica).')
 
 
 class OrdenLaboratorioViewSet(EstandarRespuestaViewSet):
     queryset = OrdenLaboratorio.objects.select_related(
         'paciente', 'medico', 'estado_general', 'usuario_admite'
-    ).order_by('-fecha_orden')
+    ).prefetch_related('examenes_solicitados__cups', 'examenes_solicitados__estado_examen',
+                       'examenes_solicitados__muestra', 'examenes_solicitados__validado_por').order_by('-fecha_orden')
     serializer_class = OrdenLaboratorioSerializer
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
+    acciones = {
+        'list': 'ordenes.ver', 'retrieve': 'ordenes.ver', 'create': 'ordenes.crear',
+        'partial_update': 'ordenes.editar', 'admitir': 'ordenes.admitir', 'finalizar': 'ordenes.finalizar',
+        'reporte_pdf': 'ordenes.reporte_pdf', 'export_rips': 'ordenes.export_rips',
+    }
+    search_fields = ['numero_orden', 'paciente__numero_documento', 'paciente__primer_nombre', 'paciente__primer_apellido']
+    filterset_fields = {'estado_general__nombre': ['exact'], 'paciente': ['exact'], 'medico': ['exact'],
+                        'fecha_orden': ['gte', 'lte']}
+
+    def create(self, request, *args, **kwargs):
+        serializer = OrdenCrearSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        datos = dict(serializer.validated_data)
+        paciente = datos.pop('paciente')
+        examenes = datos.pop('examenes')
+        orden = svc_ordenes.crear_orden(request.user, paciente, examenes, datos, request=request)
+        orden = self.get_queryset().get(pk=orden.pk)
+        return exito('Orden creada correctamente.', OrdenLaboratorioSerializer(orden).data, status.HTTP_201_CREATED)
+
+    def partial_update(self, request, *args, **kwargs):
+        orden = self.get_object()
+        if orden.estado_general.nombre != E.ORDEN_REGISTRADA:
+            raise ErrorDeDominio('Solo se puede editar una orden en estado Registrada.')
+        if orden.medico_id and orden.medico_id != request.user.pk:
+            raise PermissionDenied('Solo el médico que creó la orden puede editarla.')
+        serializer = OrdenEditarSerializer(orden, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        with transaction.atomic():
+            serializer.save()
+            auditoria.registrar(request, 'orden.editar', 'OrdenLaboratorio', orden.pk,
+                                {'campos': sorted(serializer.validated_data)})
+        return exito('Orden actualizada.', OrdenLaboratorioSerializer(self.get_queryset().get(pk=orden.pk)).data)
+
+    @action(detail=True, methods=['post'])
+    def admitir(self, request, pk=None):
+        orden = svc_ordenes.admitir_orden(request.user, pk, request=request)
+        return exito('Admisión registrada correctamente.', fecha_admision=orden.fecha_admision.isoformat())
+
+    @action(detail=True, methods=['post'])
+    def finalizar(self, request, pk=None):
+        svc_ordenes.finalizar_orden(request.user, pk, request=request)
+        return exito('Orden finalizada correctamente y reporte generado.')
 
     @action(detail=True, methods=['get'], url_path='reporte-pdf')
     def reporte_pdf(self, request, pk=None):
-        """
-        FASE 6 — Genera el PDF inmutable del informe de resultados.
-        Requiere que la orden esté en estado Finalizada (o Validada).
-        """
+        """Final (archivo guardado), parcial (se guarda con hash) o preliminar (no se guarda)."""
         orden = self.get_object()
-        
-        # Si el informe ya existe y la orden está finalizada, servirlo directamente
-        informe_existente = InformeResultados.objects.filter(orden=orden).first()
-        if informe_existente and informe_existente.archivo_pdf:
-            try:
-                with informe_existente.archivo_pdf.open('rb') as f:
+        estado = orden.estado_general.nombre
+        if estado == E.ORDEN_FINALIZADA:
+            informe = InformeResultados.objects.filter(orden=orden, tipo='final', vigente=True).first()
+            if informe and informe.archivo_pdf:
+                with informe.archivo_pdf.open('rb') as f:
                     pdf_bytes = f.read()
-                response = HttpResponse(pdf_bytes, content_type='application/pdf')
-                response['Content-Disposition'] = f'attachment; filename="informe_{orden.numero_orden}.pdf"'
-                return response
-            except Exception:
-                pass 
-        
-        estados_finales = {'Finalizada', 'Validada', 'Reportada', 'Entregada'}
-        es_preliminar = orden.estado_general.nombre not in estados_finales
-
-        try:
-            pdf_bytes = generar_pdf_orden(orden, preliminar=es_preliminar)
-            hash_doc = hashlib.sha256(pdf_bytes).hexdigest()
-
-            # Solo persistimos en DB si es la versión FINAL
-            if not es_preliminar:
-                informe, _ = InformeResultados.objects.update_or_create(
-                    orden=orden,
-                    defaults={
-                        'generado_por': request.user if request.user.is_authenticated else None,
-                        'hash_documento': hash_doc,
-                    },
-                )
-                nombre_archivo = f"informe_{orden.numero_orden}.pdf"
-                informe.archivo_pdf.save(nombre_archivo, ContentFile(pdf_bytes), save=True)
-            
-            response = HttpResponse(pdf_bytes, content_type='application/pdf')
-            prefijo = "PRELIMINAR_" if es_preliminar else ""
-            response['Content-Disposition'] = f'attachment; filename="{prefijo}informe_{orden.numero_orden}.pdf"'
-            return response
-        except Exception as e:
-            logger.error("Error generando PDF para orden %s: %s", pk, str(e))
-            return Response(
-                {'estado': 'error_servidor', 'mensaje': 'Error al generar el PDF del informe.', 'detalle': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-    @action(detail=True, methods=['post'], url_path='finalizar')
-    def finalizar(self, request, pk=None):
-        """
-        FASE 6 — Cierra la orden manualmente, marcándola como Finalizada y 
-        generando el PDF de resultados persistente.
-        """
-        orden = self.get_object()
-        
-        # Validar que al menos tenga un examen validado para poder finalizar
-        examenes_validados = orden.examenes_solicitados.filter(estado_examen__nombre='Validado').count()
-        if examenes_validados == 0:
-            return Response(
-                {
-                    'estado': 'error_validacion',
-                    'mensaje': 'No se puede finalizar una orden que no tiene ningún examen validado clínicamente.'
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        estado_finalizada, _ = EstadoOrden.objects.get_or_create(nombre='Finalizada')
-        orden.estado_general = estado_finalizada
-        orden.save(update_fields=['estado_general'])
-
-        # Generar y persistir el PDF inmediatamente al finalizar
-        try:
-            pdf_bytes = generar_pdf_orden(orden)
-            hash_doc = hashlib.sha256(pdf_bytes).hexdigest()
-            informe, _ = InformeResultados.objects.update_or_create(
-                orden=orden,
-                defaults={
-                    'generado_por': request.user if request.user.is_authenticated else None,
-                    'hash_documento': hash_doc,
-                },
-            )
-            nombre_archivo = f"informe_{orden.numero_orden}.pdf"
-            informe.archivo_pdf.save(nombre_archivo, ContentFile(pdf_bytes), save=True)
-        except Exception as e:
-            logger.error("Error persistiendo PDF al finalizar orden %s: %s", pk, str(e))
-
-        # Notificar al médico
-        if orden.medico:
-            _crear_notificacion(
-                destinatario=orden.medico,
-                tipo='orden_finalizada',
-                mensaje=f"La orden {orden.numero_orden} ha sido finalizada manualmente.",
-                orden=orden,
-            )
-
-        return Response(
-            {'estado': 'exito', 'mensaje': 'Orden finalizada correctamente y reporte generado.'},
-            status=status.HTTP_200_OK
-        )
-
-    @action(detail=True, methods=['post'], url_path='admitir')
-    def admitir(self, request, pk=None):
-        """
-        FASE 2 — Registra la admisión del paciente en recepción del laboratorio.
-        """
-        orden = self.get_object()
-        orden.fecha_admision = timezone.now()
-        orden.usuario_admite = request.user if request.user.is_authenticated else None
-        orden.save(update_fields=['fecha_admision', 'usuario_admite'])
-        return Response(
-            {
-                'estado': 'exito',
-                'mensaje': 'Admisión registrada correctamente.',
-                'fecha_admision': str(orden.fecha_admision),
-            },
-            status=status.HTTP_200_OK,
-        )
+                nombre = f'informe_{orden.numero_orden}.pdf'
+            else:
+                with transaction.atomic():
+                    informe, pdf_bytes = svc_informes.generar_informe(orden, 'final', request.user)
+                nombre = f'informe_{orden.numero_orden}.pdf'
+        elif estado == E.ORDEN_RESULTADOS_PARCIALES:
+            with transaction.atomic():
+                informe, pdf_bytes = svc_informes.generar_informe(orden, 'parcial', request.user)
+            nombre = f'PARCIAL_informe_{orden.numero_orden}.pdf'
+        else:
+            pdf_bytes = svc_informes.generar_pdf(orden, 'preliminar')
+            nombre = f'PRELIMINAR_informe_{orden.numero_orden}.pdf'
+        auditoria.registrar(request, 'informe.descargar', 'OrdenLaboratorio', orden.pk, {'archivo': nombre})
+        respuesta = HttpResponse(pdf_bytes, content_type='application/pdf')
+        respuesta['Content-Disposition'] = f'attachment; filename="{nombre}"'
+        return respuesta
 
     @action(detail=False, methods=['get'], url_path='export-rips')
     def export_rips(self, request):
-        """
-        FASE 6 — Exporta un archivo plano/csv con los CUPS finalizados para auditoría.
-        Filtros opcionales: ?fecha_inicio=YYYY-MM-DD&fecha_fin=YYYY-MM-DD
-        """
+        """CSV de órdenes finalizadas para auditoría (RF-42)."""
         fecha_inicio = request.query_params.get('fecha_inicio')
         fecha_fin = request.query_params.get('fecha_fin')
-
-        qs = OrdenLaboratorio.objects.select_related('paciente__tipo_documento').prefetch_related('examenes_solicitados__cups')
-        qs = qs.filter(estado_general__nombre='Finalizada')
+        qs = OrdenLaboratorio.objects.select_related('paciente__tipo_documento', 'estado_general') \
+            .prefetch_related('examenes_solicitados__cups').filter(estado_general__nombre=E.ORDEN_FINALIZADA)
         if fecha_inicio:
             qs = qs.filter(fecha_orden__date__gte=fecha_inicio)
         if fecha_fin:
             qs = qs.filter(fecha_orden__date__lte=fecha_fin)
 
-        response = HttpResponse(content_type='text/csv; charset=utf-8')
-        response['Content-Disposition'] = 'attachment; filename="rips_laboratorio.csv"'
-
-        writer = csv.writer(response)
-        writer.writerow([
-            'numero_orden', 'fecha_orden', 'tipo_doc', 'numero_doc', 'cups',
-            'descripcion_cups', 'codigo_cie10', 'entidad_remitente', 'convenio', 'estado_orden'
-        ])
-
+        respuesta = HttpResponse(content_type='text/csv; charset=utf-8')
+        respuesta['Content-Disposition'] = 'attachment; filename="rips_laboratorio.csv"'
+        writer = csv.writer(respuesta)
+        writer.writerow(['numero_orden', 'fecha_orden', 'tipo_doc', 'numero_doc', 'cups', 'descripcion_cups',
+                         'codigo_cie10', 'entidad_remitente', 'convenio', 'finalidad_consulta', 'causa_externa',
+                         'tipo_diagnostico', 'estado_orden'])
         for orden in qs:
             for examen in orden.examenes_solicitados.all():
                 writer.writerow([
-                    orden.numero_orden,
-                    orden.fecha_orden.strftime('%Y-%m-%d %H:%M:%S') if orden.fecha_orden else '',
-                    orden.paciente.tipo_documento.codigo if orden.paciente and orden.paciente.tipo_documento else '',
-                    orden.paciente.numero_documento if orden.paciente else '',
-                    examen.cups.codigo_cups if examen.cups else '',
-                    examen.cups.descripcion if examen.cups else '',
-                    orden.codigo_cie10 or '',
-                    orden.entidad_remitente or '',
-                    orden.convenio or '',
-                    orden.estado_general.nombre if orden.estado_general else '',
+                    orden.numero_orden, timezone.localtime(orden.fecha_orden).strftime('%Y-%m-%d %H:%M:%S'),
+                    orden.paciente.tipo_documento.codigo, orden.paciente.numero_documento,
+                    examen.cups.codigo_cups, examen.cups.descripcion, orden.codigo_cie10 or '',
+                    orden.entidad_remitente or '', orden.convenio or '', orden.finalidad_consulta,
+                    orden.causa_externa, orden.tipo_diagnostico, orden.estado_general.nombre,
                 ])
-
-        return response
+        auditoria.registrar(request, 'rips.exportar', 'OrdenLaboratorio', None,
+                            {'fecha_inicio': fecha_inicio, 'fecha_fin': fecha_fin, 'ordenes': qs.count()})
+        return respuesta
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# FASE 3 — Muestras físicas
+# FASE 3 — Muestras
 # ─────────────────────────────────────────────────────────────────────────────
 
 class MuestraFisicaViewSet(EstandarRespuestaViewSet):
-    queryset = MuestraFisica.objects.select_related(
-        'orden', 'estado_muestra', 'usuario_recolecta'
-    ).order_by('-fecha_recoleccion')
+    queryset = MuestraFisica.objects.select_related('orden__paciente', 'estado_muestra', 'usuario_recolecta') \
+        .prefetch_related('examenes').order_by('-fecha_recoleccion')
     serializer_class = MuestraFisicaSerializer
+    http_method_names = ['get', 'post', 'head', 'options']
+    acciones = {
+        'list': 'muestras.ver', 'retrieve': 'muestras.ver', 'create': 'muestras.registrar',
+        'buscar': 'muestras.buscar', 'recibir_laboratorio': 'muestras.recibir', 'rechazar': 'muestras.rechazar',
+    }
+    search_fields = ['codigo_barras', 'orden__numero_orden']
+    filterset_fields = ['orden', 'estado_muestra__nombre', 'condicion_muestra']
 
-    @action(detail=False, methods=['get'], url_path='buscar')
+    def create(self, request, *args, **kwargs):
+        serializer = MuestraCrearSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        datos = dict(serializer.validated_data)
+        orden = datos.pop('orden')
+        examenes = datos.pop('examenes', None)
+        muestra = svc_muestras.registrar_muestra(request.user, orden, datos, examenes_ids=examenes, request=request)
+        muestra = self.get_queryset().get(pk=muestra.pk)
+        return exito('Muestra registrada.', MuestraFisicaSerializer(muestra).data, status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['get'])
     def buscar(self, request):
-        """
-        FASE 3 — Busca una muestra por código de barras (escaneo de tablet).
-        GET /api/v1/muestras/buscar/?codigo_barras=MUE-XXXX
-        """
         codigo = request.query_params.get('codigo_barras', '').strip()
         if not codigo:
-            return Response(
-                {'estado': 'error_validacion', 'mensaje': 'Se requiere el parámetro codigo_barras.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        try:
-            muestra = MuestraFisica.objects.select_related(
-                'orden__paciente', 'estado_muestra'
-            ).get(codigo_barras=codigo)
-            return Response(
-                {'estado': 'exito', 'datos': MuestraFisicaSerializer(muestra).data},
-                status=status.HTTP_200_OK,
-            )
-        except MuestraFisica.DoesNotExist:
-            return Response(
-                {'estado': 'no_encontrado', 'mensaje': f"No existe muestra con código '{codigo}'."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            raise ErrorDeValidacion('Se requiere el parámetro codigo_barras.')
+        muestra = self.get_queryset().filter(codigo_barras=codigo).first()
+        if muestra is None:
+            return Response({'estado': 'no_encontrado', 'mensaje': f"No existe muestra con código '{codigo}'."},
+                            status=status.HTTP_404_NOT_FOUND)
+        return exito(datos=MuestraFisicaSerializer(muestra).data)
 
     @action(detail=True, methods=['post'], url_path='recibir-laboratorio')
     def recibir_laboratorio(self, request, pk=None):
-        """
-        FASE 3/4 — Registra la recepción de la muestra en el laboratorio central.
-        Cambia el estado de la muestra a 'Recibida en Laboratorio' y los exámenes
-        vinculados a 'En Análisis'.
-        """
-        muestra = self.get_object()
-        try:
-            estado_recibida = EstadoMuestra.objects.get(nombre='Recibida en Laboratorio')
-            muestra.estado_muestra = estado_recibida
-            muestra.save(update_fields=['estado_muestra'])
+        _, actualizados = svc_muestras.recibir_muestra(request.user, pk, request=request)
+        return exito('Muestra recibida en laboratorio. Exámenes marcados como En Análisis.',
+                     examenes_actualizados=actualizados)
 
-            estado_analisis = EstadoExamen.objects.get(nombre='En Análisis')
-            examenes_actualizados = muestra.examenes.filter(
-                estado_examen__nombre__in=['Pendiente', 'Muestra Recolectada']
-            )
-            examenes_actualizados.update(estado_examen=estado_analisis)
-
-            return Response(
-                {
-                    'estado': 'exito',
-                    'mensaje': 'Muestra recibida en laboratorio. Exámenes marcados como En Análisis.',
-                    'examenes_actualizados': examenes_actualizados.count(),
-                },
-                status=status.HTTP_200_OK,
-            )
-        except EstadoMuestra.DoesNotExist:
-            return Response(
-                {'estado': 'error_config', 'mensaje': "Estado 'Recibida en Laboratorio' no está configurado."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-        except Exception as e:
-            logger.error("Error al recibir muestra %s: %s", pk, str(e))
-            return Response(
-                {'estado': 'error_servidor', 'mensaje': 'Error al registrar la recepción de la muestra.'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-    @action(detail=True, methods=['post'], url_path='rechazar')
+    @action(detail=True, methods=['post'])
     def rechazar(self, request, pk=None):
-        """
-        FASE 3/5 — Bacteriólogo rechaza una muestra (ej: hemolizada).
-        Notifica al flebotomista para repetir la toma.
-        """
-        muestra = self.get_object()
-        motivo = request.data.get('motivo_rechazo', '').strip()
-        if not motivo:
-            return Response(
-                {'estado': 'error_validacion', 'mensaje': 'Se requiere indicar el motivo_rechazo.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        condicion = request.data.get('condicion_muestra', muestra.condicion_muestra)
-
-        try:
-            estado_rechazada = EstadoMuestra.objects.get(nombre='Rechazada')
-            muestra.estado_muestra = estado_rechazada
-            muestra.motivo_rechazo = motivo
-            muestra.condicion_muestra = condicion
-            muestra.save(update_fields=['estado_muestra', 'motivo_rechazo', 'condicion_muestra'])
-
-            # Notificar al flebotomista que tomó la muestra
-            if muestra.usuario_recolecta:
-                _crear_notificacion(
-                    destinatario=muestra.usuario_recolecta,
-                    tipo='muestra_rechazada',
-                    mensaje=(
-                        f"La muestra {muestra.codigo_barras} de la orden "
-                        f"{muestra.orden.numero_orden} fue rechazada. "
-                        f"Motivo: {motivo}. Por favor repita la toma."
-                    ),
-                    orden=muestra.orden,
-                )
-
-            return Response(
-                {
-                    'estado': 'exito',
-                    'mensaje': 'Muestra rechazada. Se emitió alerta al flebotomista.',
-                    'muestra_id': str(muestra.id),
-                },
-                status=status.HTTP_200_OK,
-            )
-        except EstadoMuestra.DoesNotExist:
-            return Response(
-                {'estado': 'error_config', 'mensaje': "Estado 'Rechazada' no está configurado."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+        serializer = RechazoSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        muestra = svc_muestras.rechazar_muestra(
+            request.user, pk, serializer.validated_data['motivo_rechazo'],
+            serializer.validated_data.get('condicion_muestra'), request=request,
+        )
+        return exito('Muestra rechazada. Se notificó al flebotomista y al médico.', muestra_id=str(muestra.pk))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# FASE 4 & 5 — Exámenes y resultados
+# FASES 4 y 5 — Exámenes, lecturas y resultados
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ExamenSolicitadoViewSet(EstandarRespuestaViewSet):
     queryset = ExamenSolicitado.objects.select_related(
-        'orden__paciente', 'cups', 'estado_examen', 'validado_por'
+        'orden__paciente', 'cups', 'estado_examen', 'validado_por', 'muestra'
     ).order_by('orden__numero_orden')
     serializer_class = ExamenSolicitadoSerializer
-
-    @action(detail=True, methods=['post'], url_path='aprobar')
-    def aprobar(self, request, pk=None):
-        """
-        FASE 5 — Bacteriólogo valida y firma el examen.
-        Verifica que todos los parámetros tengan resultado.
-        Si todos los exámenes de la orden quedan validados, la orden pasa a 'Finalizada'.
-        """
-        examen = self.get_object()
-
-        total_parametros = ParametroExamen.objects.filter(cups=examen.cups).values('nombre_parametro').distinct().count()
-        total_resultados = examen.resultados.count()
-
-        if total_resultados == 0:
-            return Response(
-                {'estado': 'error_validacion', 'mensaje': 'No se puede aprobar un examen sin resultados.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if total_parametros > 0 and total_resultados < total_parametros:
-            return Response(
-                {
-                    'estado': 'conflicto',
-                    'mensaje': 'No es posible aprobar: faltan resultados por registrar o procesar.',
-                    'faltantes': total_parametros - total_resultados,
-                },
-                status=status.HTTP_409_CONFLICT,
-            )
-
-        examen.estado_examen = EstadoExamen.objects.get(nombre='Validado')
-        examen.validado_por = request.user if request.user.is_authenticated else None
-        examen.fecha_validacion = timezone.now()
-        examen.save(update_fields=['estado_examen', 'validado_por', 'fecha_validacion'])
-
-        # Verificar si todos los exámenes de la orden están validados → Finalizar orden
-        orden = examen.orden
-        estados_no_finales = {'Pendiente', 'Muestra Recolectada', 'En Análisis', 'En Espera'}
-        examenes_pendientes = orden.examenes_solicitados.filter(
-            estado_examen__nombre__in=estados_no_finales
-        ).count()
-        if examenes_pendientes == 0:
-            estado_finalizada, _ = EstadoOrden.objects.get_or_create(
-                nombre='Finalizada',
-                defaults={'descripcion': 'Todos los exámenes de la orden han sido validados.'}
-            )
-            orden.estado_general = estado_finalizada
-            orden.save(update_fields=['estado_general'])
-            # Notificar al médico solicitante
-            if orden.medico:
-                _crear_notificacion(
-                    destinatario=orden.medico,
-                    tipo='orden_finalizada',
-                    mensaje=(
-                        f"Los resultados de la orden {orden.numero_orden} del paciente "
-                        f"{orden.paciente.primer_nombre} {orden.paciente.primer_apellido} "
-                        f"ya están disponibles."
-                    ),
-                    orden=orden,
-                )
-            orden_finalizada = True
-        else:
-            orden_finalizada = False
-
-        return Response(
-            {
-                'estado': 'exito',
-                'mensaje': 'Examen validado correctamente.' + (' Orden marcada como Finalizada.' if orden_finalizada else ''),
-                'examen_id': str(examen.id),
-                'orden_finalizada': orden_finalizada,
-            },
-            status=status.HTTP_200_OK,
-        )
-
-    @action(detail=True, methods=['post'], url_path='rechazar')
-    def rechazar(self, request, pk=None):
-        """
-        FASE 5 — Bacteriólogo rechaza el resultado de un examen (ej: muestra hemolizada).
-        Notifica al flebotomista para nueva toma si la muestra está vinculada.
-        """
-        examen = self.get_object()
-        motivo = request.data.get('motivo_rechazo', '').strip()
-        if not motivo:
-            return Response(
-                {'estado': 'error_validacion', 'mensaje': 'Se requiere indicar el motivo_rechazo.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        examen.motivo_rechazo = motivo
-        examen.estado_examen = EstadoExamen.objects.get(nombre='Repetir')
-        examen.save(update_fields=['motivo_rechazo', 'estado_examen'])
-
-        # Notificar al flebotomista si se conoce quién tomó la muestra
-        if examen.muestra and examen.muestra.usuario_recolecta:
-            _crear_notificacion(
-                destinatario=examen.muestra.usuario_recolecta,
-                tipo='examen_rechazado',
-                mensaje=(
-                    f"El examen '{examen.cups.descripcion}' de la orden "
-                    f"{examen.orden.numero_orden} fue rechazado. "
-                    f"Motivo: {motivo}. Se requiere nueva toma de muestra."
-                ),
-                orden=examen.orden,
-            )
-
-        return Response(
-            {
-                'estado': 'exito',
-                'mensaje': 'Examen rechazado. Se notificó al flebotomista.',
-                'examen_id': str(examen.id),
-            },
-            status=status.HTTP_200_OK,
-        )
-
-
-class LecturaEquipoSerialViewSet(EstandarRespuestaViewSet):
-    queryset = LecturaEquipoSerial.objects.all().order_by('-fecha_recepcion')
-    serializer_class = LecturaEquipoSerialSerializer
-
-    def _token_middleware_valido(self, request, equipo_origen):
-        token = request.headers.get('X-Middleware-Token') or request.data.get('token_middleware')
-        if not token:
-            return False
-        return ConfiguracionEquipo.objects.filter(
-            activo=True,
-            token_middleware=token,
-        ).filter(
-            Q(codigo_equipo=equipo_origen) | Q(nombre=equipo_origen)
-        ).exists()
+    http_method_names = ['get', 'post', 'head', 'options']
+    acciones = {
+        'list': 'examenes.ver', 'retrieve': 'examenes.ver', 'create': 'examenes.crear',
+        'aprobar': 'examenes.aprobar', 'rechazar': 'examenes.rechazar', 'anular': 'examenes.anular',
+    }
+    search_fields = ['orden__numero_orden', 'cups__codigo_cups', 'cups__descripcion', 'orden__paciente__numero_documento']
+    filterset_fields = ['orden', 'estado_examen__nombre', 'cups', 'muestra']
 
     def create(self, request, *args, **kwargs):
-        """
-        FASE 4 — Ingesta de tramas desde middleware.
-        Permite autenticación por token estático en encabezado X-Middleware-Token.
-        """
-        equipo_origen = request.data.get('equipo_origen')
-        if not equipo_origen:
-            return Response(
-                {'estado': 'error_validacion', 'mensaje': 'El campo equipo_origen es obligatorio.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        """Agrega un examen a una orden abierta (RF-20.4). La creación normal va con la orden."""
+        serializer = ExamenAgregarSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        orden = serializer.validated_data['orden']
+        cups = serializer.validated_data['cups']
+        with transaction.atomic():
+            orden = OrdenLaboratorio.objects.select_for_update().select_related('estado_general').get(pk=orden.pk)
+            if orden.estado_general.nombre in E.ORDEN_ESTADOS_FINALES:
+                raise ErrorDeDominio('La orden está cerrada; no admite exámenes nuevos.')
+            if orden.examenes_solicitados.filter(cups=cups).exclude(estado_examen__nombre=E.EXAMEN_ANULADO).exists():
+                raise ErrorDeDominio('La orden ya tiene ese examen.')
+            examen = ExamenSolicitado.objects.create(orden=orden, cups=cups, estado_examen=E.estado_examen(E.EXAMEN_PENDIENTE))
+            auditoria.registrar(request, 'examen.agregar', 'ExamenSolicitado', examen.pk,
+                                {'orden': orden.numero_orden, 'cups': cups.codigo_cups})
+        return exito('Examen agregado a la orden.', ExamenSolicitadoSerializer(self.get_queryset().get(pk=examen.pk)).data,
+                     status.HTTP_201_CREATED)
 
-        usuario_autenticado = bool(request.user and request.user.is_authenticated)
-        if not usuario_autenticado and not self._token_middleware_valido(request, equipo_origen):
-            return Response(
-                {
-                    'estado': 'no_autorizado',
-                    'mensaje': 'Token de middleware inválido o faltante para el equipo de origen.',
-                },
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
+    @action(detail=True, methods=['post'])
+    def aprobar(self, request, pk=None):
+        examen, orden_finalizada = svc_examenes.aprobar_examen(request.user, pk, request=request)
+        return exito('Examen validado correctamente.' + (' Orden marcada como Finalizada.' if orden_finalizada else ''),
+                     examen_id=str(examen.pk), orden_finalizada=orden_finalizada)
 
-        return super().create(request, *args, **kwargs)
+    @action(detail=True, methods=['post'])
+    def rechazar(self, request, pk=None):
+        serializer = RechazoSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        examen = svc_examenes.rechazar_examen(request.user, pk, serializer.validated_data['motivo_rechazo'], request=request)
+        return exito('Examen rechazado. Se notificó al flebotomista y al médico.', examen_id=str(examen.pk))
 
-    @action(detail=True, methods=['post'], url_path='procesar')
+    @action(detail=True, methods=['post'])
+    def anular(self, request, pk=None):
+        serializer = MotivoSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        examen = svc_examenes.anular_examen(request.user, pk, serializer.validated_data['motivo'], request=request)
+        return exito('Examen anulado.', examen_id=str(examen.pk))
+
+
+class LecturaEquipoSerialViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin,
+                                 viewsets.GenericViewSet):
+    queryset = LecturaEquipoSerial.objects.all().order_by('-fecha_recepcion')
+    serializer_class = LecturaEquipoSerialSerializer
+    permission_classes = [PermisoIngestaLecturas]
+    acciones = {'create': 'lecturas.registrar', 'list': 'lecturas.ver', 'retrieve': 'lecturas.ver',
+                'procesar': 'lecturas.procesar'}
+    filterset_fields = ['procesado', 'equipo_origen', 'codigo_barras_leido']
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        lectura = serializer.save()
+        auditoria.registrar(request, 'lectura.recibir', 'LecturaEquipoSerial', lectura.pk,
+                            {'equipo_origen': lectura.equipo_origen, 'codigo_barras': lectura.codigo_barras_leido})
+        return exito('Lectura registrada.', serializer.data, status.HTTP_201_CREATED)
+
+    def retrieve(self, request, *args, **kwargs):
+        return exito(datos=self.get_serializer(self.get_object()).data)
+
+    @action(detail=True, methods=['post'])
     def procesar(self, request, pk=None):
-        """
-        FASE 4 — Extrae los analitos de la trama cruda y los guarda en ResultadoAnalito.
-        Usa rangos específicos por sexo/edad del paciente para calcular es_anormal/es_critico.
-        Genera alertas de valor crítico si corresponde.
-        """
-        lectura = self.get_object()
-
-        if not lectura.codigo_barras_leido:
-            return Response(
-                {'estado': 'error_validacion', 'mensaje': 'La lectura no tiene código de barras asociado.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        examenes = ExamenSolicitado.objects.select_related(
-            'cups', 'orden__paciente__sexo_biologico'
-        ).filter(muestra__codigo_barras=lectura.codigo_barras_leido)
-
-        if not examenes.exists():
-            return Response(
-                {
-                    'estado': 'no_encontrado',
-                    'mensaje': 'No se encontraron exámenes para el código de barras recibido.',
-                    'codigo_barras': lectura.codigo_barras_leido,
-                },
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        creados = actualizados = omitidos = criticos = 0
-
-        for examen in examenes:
-            paciente = examen.orden.paciente
-            # Obtener nombres únicos de parámetros para evitar procesar duplicados
-            nombres = list(
-                ParametroExamen.objects.filter(cups=examen.cups)
-                .values_list('nombre_parametro', flat=True)
-                .distinct()
-            )
-
-            for nombre in nombres:
-                parametro = obtener_parametro_para_paciente(examen.cups_id, nombre, paciente)
-                if not parametro:
-                    omitidos += 1
-                    continue
-
-                valor = buscar_valor_parametro(lectura.datos_json, nombre)
-                if valor is None:
-                    omitidos += 1
-                    continue
-
-                anormal, critico = es_anormal(parametro, valor)
-
-                resultado, created = ResultadoAnalito.objects.update_or_create(
-                    examen_solicitado=examen,
-                    parametro=parametro,
-                    defaults={
-                        'lectura_serial': lectura,
-                        'valor_resultado': str(valor),
-                        'es_anormal': anormal,
-                        'es_critico': critico,
-                    },
-                )
-
-                if created:
-                    creados += 1
-                else:
-                    actualizados += 1
-
-                # Alerta de valor crítico — notificar al médico de la orden
-                if critico:
-                    criticos += 1
-                    if examen.orden.medico:
-                        _crear_notificacion(
-                            destinatario=examen.orden.medico,
-                            tipo='alerta_critica',
-                            mensaje=(
-                                f"ALERTA CRÍTICA — {nombre}: {valor} {parametro.unidades_medida or ''} "
-                                f"(Orden {examen.orden.numero_orden}, paciente "
-                                f"{paciente.primer_nombre} {paciente.primer_apellido})."
-                            ),
-                            orden=examen.orden,
-                        )
-
-            # Avanzar estado del examen
-            if examen.estado_examen.nombre in ('Pendiente', 'Muestra Recolectada'):
-                examen.estado_examen = EstadoExamen.objects.get(nombre='En Análisis')
-                examen.save(update_fields=['estado_examen'])
-
-        lectura.procesado = True
-        lectura.save(update_fields=['procesado'])
-
-        return Response(
-            {
-                'estado': 'exito',
-                'mensaje': 'Lectura serial procesada correctamente.',
-                'lectura_id': str(lectura.id),
-                'resultados_creados': creados,
-                'resultados_actualizados': actualizados,
-                'resultados_omitidos': omitidos,
-                'alertas_criticas': criticos,
-            },
-            status=status.HTTP_200_OK,
-        )
+        resumen = svc_resultados.procesar_lectura(request.user, pk, request=request)
+        return exito('Lectura serial procesada correctamente.', **resumen)
 
 
-class ResultadoAnalitoViewSet(EstandarRespuestaViewSet):
+class ResultadoAnalitoViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin,
+                              viewsets.GenericViewSet):
+    """Registro manual (RF-32) y consulta. Un resultado validado no se modifica (RN-22)."""
     queryset = ResultadoAnalito.objects.select_related(
-        'parametro', 'examen_solicitado'
+        'parametro', 'examen_solicitado__estado_examen', 'examen_solicitado__orden'
     ).order_by('-fecha_procesamiento')
     serializer_class = ResultadoAnalitoSerializer
+    permission_classes = [PermisoPorAccion]
+    acciones = {'list': 'resultados.ver', 'retrieve': 'resultados.ver', 'create': 'resultados.registrar'}
+    filterset_fields = ['examen_solicitado', 'parametro', 'es_anormal', 'es_critico', 'examen_solicitado__orden']
+
+    def create(self, request, *args, **kwargs):
+        serializer = ResultadoRegistrarSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+        resultado, creado = svc_resultados.registrar_resultado_manual(
+            request.user, d['examen_solicitado'].pk, d['parametro'].pk, d['valor_resultado'],
+            d.get('comentario_bacteriologo'), request=request,
+        )
+        resultado = self.get_queryset().get(pk=resultado.pk)
+        return exito('Resultado guardado.', ResultadoAnalitoSerializer(resultado).data,
+                     status.HTTP_201_CREATED if creado else status.HTTP_200_OK)
+
+    def retrieve(self, request, *args, **kwargs):
+        return exito(datos=self.get_serializer(self.get_object()).data)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -854,30 +495,24 @@ class ResultadoAnalitoViewSet(EstandarRespuestaViewSet):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class InformeResultadosViewSet(viewsets.ReadOnlyModelViewSet):
-    """
-    FASE 6 — Solo lectura; la creación/actualización se realiza
-    desde OrdenLaboratorioViewSet.reporte_pdf.
-    """
     queryset = InformeResultados.objects.select_related('orden', 'generado_por').order_by('-fecha_generacion')
     serializer_class = InformeResultadosSerializer
-    permission_classes = [LaboratorioRolPermission]
+    permission_classes = [PermisoPorAccion]
+    accion_lectura = 'informes.ver'
+    filterset_fields = ['orden', 'tipo', 'vigente']
 
 
-class NotificacionViewSet(viewsets.ModelViewSet):
-    """
-    FASE 6 — Gestión de notificaciones internas del LIMS.
-    Los usuarios solo ven sus propias notificaciones.
-    """
+class NotificacionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    """Cada usuario ve solo sus notificaciones (RF-41.1)."""
     serializer_class = NotificacionSerializer
-    permission_classes = [LaboratorioRolPermission]
+    permission_classes = [PermisoPorAccion]
+    accion_lectura = 'notificaciones.propias'
+    accion_escritura = 'notificaciones.propias'
+    filterset_fields = ['tipo', 'leida', 'orden']
 
     def get_queryset(self):
-        if self.request.user.is_authenticated:
-            qs = Notificacion.objects.filter(destinatario=self.request.user).order_by('-fecha_creacion')
-        else:
-            qs = Notificacion.objects.none()
-        solo_no_leidas = str(self.request.query_params.get('no_leidas', 'false')).lower() == 'true'
-        if solo_no_leidas:
+        qs = Notificacion.objects.filter(destinatario=self.request.user).select_related('orden').order_by('-fecha_creacion')
+        if str(self.request.query_params.get('no_leidas', 'false')).lower() == 'true':
             qs = qs.filter(leida=False)
         return qs
 
@@ -888,13 +523,9 @@ class NotificacionViewSet(viewsets.ModelViewSet):
             notif.leida = True
             notif.fecha_lectura = timezone.now()
             notif.save(update_fields=['leida', 'fecha_lectura'])
-        return Response({'estado': 'exito', 'mensaje': 'Notificación marcada como leída.'}, status=status.HTTP_200_OK)
+        return exito('Notificación marcada como leída.')
 
     @action(detail=False, methods=['post'], url_path='marcar-todas-leidas')
     def marcar_todas_leidas(self, request):
-        ahora = timezone.now()
-        actualizadas = self.get_queryset().filter(leida=False).update(leida=True, fecha_lectura=ahora)
-        return Response(
-            {'estado': 'exito', 'mensaje': f'{actualizadas} notificaciones marcadas como leídas.'},
-            status=status.HTTP_200_OK,
-        )
+        actualizadas = self.get_queryset().filter(leida=False).update(leida=True, fecha_lectura=timezone.now())
+        return exito(f'{actualizadas} notificaciones marcadas como leídas.')

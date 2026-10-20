@@ -64,6 +64,7 @@ MATRIZ = {
     'examenes.rechazar': (R.BACTERIOLOGO,),
     'examenes.anular': (R.MEDICO, R.BACTERIOLOGO),
     'lecturas.ver': (R.BACTERIOLOGO, R.AUDITOR),
+    'lecturas.registrar': (R.BACTERIOLOGO,),   # además del middleware con token (RF-30.1)
     'lecturas.procesar': (R.BACTERIOLOGO,),
     'resultados.ver': (R.MEDICO, R.BACTERIOLOGO, R.AUDITOR),
     'resultados.registrar': (R.BACTERIOLOGO,),
