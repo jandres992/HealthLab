@@ -1,30 +1,12 @@
-"""Permisos de negocio por rol para el módulo laboratorio."""
-import unicodedata
+"""Permisos de negocio por rol para el módulo laboratorio.
 
+TRANSITORIO: esta clase se reemplaza por `usuarios.permissions.PermisoPorAccion`
+con la matriz de acciones en el paso "validación y cierre" de la Fase 1.
+Mientras tanto usa el módulo común de roles (usuarios/roles.py).
+"""
 from rest_framework.permissions import SAFE_METHODS, BasePermission
 
-from usuarios.models import UsuarioXPermiso
-
-
-def _norm(value):
-    text = unicodedata.normalize("NFKD", str(value or "").strip().lower())
-    return "".join(ch for ch in text if not unicodedata.combining(ch))
-
-
-def _roles_usuario(user):
-    """Retorna roles normalizados inferidos desde UsuarioXPermiso."""
-    roles = set()
-    permisos = UsuarioXPermiso.objects.select_related(
-        "permiso__tipo_usuario"
-    ).filter(usuario=user)
-    for up in permisos:
-        rol = _norm(up.permiso.tipo_usuario.tipo)
-        if rol:
-            roles.add(rol)
-        permiso = _norm(up.permiso.permiso)
-        if permiso.startswith("permiso_"):
-            roles.add(permiso.replace("permiso_", "", 1))
-    return roles
+from usuarios.roles import roles_de as _roles_usuario
 
 
 class LaboratorioRolPermission(BasePermission):

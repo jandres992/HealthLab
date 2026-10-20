@@ -2,6 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
 from .models import (
+	Auditoria,
 	Departamento,
 	DispositivoConfianza,
 	Municipio,
@@ -12,6 +13,25 @@ from .models import (
 	Usuario,
 	UsuarioXPermiso,
 )
+
+
+@admin.register(Auditoria)
+class AuditoriaAdmin(admin.ModelAdmin):
+	"""Bitácora de solo lectura: no se crea, edita ni borra desde el admin (RNF-34)."""
+	list_display = ("fecha", "username", "accion", "entidad", "entidad_id", "exito", "ip")
+	list_filter = ("accion", "entidad", "exito", "fecha")
+	search_fields = ("username", "accion", "entidad_id", "ip", "device_id")
+	readonly_fields = [f.name for f in Auditoria._meta.fields]
+	ordering = ("-fecha",)
+
+	def has_add_permission(self, request):
+		return False
+
+	def has_change_permission(self, request, obj=None):
+		return False
+
+	def has_delete_permission(self, request, obj=None):
+		return False
 
 
 @admin.register(TipoId)
@@ -125,6 +145,7 @@ class UsuarioAdmin(BaseUserAdmin):
 				"fields": (
 					"tipo_id",
 					"numero_id",
+					"registro_profesional",
 					"f_nacimiento",
 					"sexo",
 					"municipio_residencia",

@@ -22,18 +22,19 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, Sp
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    # 2. Rutas para generar el archivo base de Swagger (Esquema JSON/YAML)
-    path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
-
-    # 3. Interfaz gráfica de Swagger UI (La clásica y más usada)
-    path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
-
-    # 4. (Opcional) Interfaz gráfica de Redoc (Otra vista muy elegante para documentar APIs)
-    path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
-    path('', include('laboratorio.urls')),  # Expone tambien /api/v1/* segun RF-09.
-    path('lab/', include('laboratorio.urls')),
+    path('', include('laboratorio.urls')),      # /api/v1/* (RF-09)
+    path('lab/', include('laboratorio.urls')),  # alias histórico; se retira con la app Expo
     path('usr/', include('usuarios.urls')),
 ]
+
+# Documentación OpenAPI: el esquema siempre (lo usa el generador del cliente);
+# las interfaces Swagger/Redoc solo en desarrollo o si se habilitan por entorno (RNF-27).
+urlpatterns += [path('api/schema/', SpectacularAPIView.as_view(), name='schema')]
+if settings.EXPONER_DOCUMENTACION_API:
+    urlpatterns += [
+        path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
+        path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
+    ]
 
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

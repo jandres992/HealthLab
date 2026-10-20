@@ -1,8 +1,11 @@
 asgiref==3.11.1
 attrs==25.4.0
 charset-normalizer==3.4.6
+dj-database-url==3.0.1
 Django==6.0.3
 django-cors-headers==4.9.0
+django-filter==25.1
+django-simple-history==3.10.1
 djangorestframework==3.16.1
 djangorestframework_simplejwt==5.5.1
 drf-spectacular==0.29.0
@@ -13,6 +16,7 @@ jsonschema-specifications==2025.9.1
 packaging==26.2
 pillow==12.1.1
 PyJWT==2.11.0
+python-dotenv==1.1.1
 PyYAML==6.0.3
 referencing==0.37.0
 reportlab==4.4.10
