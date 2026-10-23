@@ -25,7 +25,7 @@ from usuarios import auditoria
 from usuarios.permissions import PermisoPorAccion
 
 from .domain import estados as E
-from .domain.errores import ErrorDeDominio, ErrorDeValidacion
+from .domain.errores import ErrorDeDominio, ErrorDeValidacion, NoEncontrado
 from .models import (
     CatalogoCups, ConfiguracionEquipo, EstadoExamen, EstadoMuestra, EstadoOrden,
     ExamenSolicitado, InformeResultados, LecturaEquipoSerial, MuestraFisica,
@@ -36,13 +36,15 @@ from .permissions import PermisoIngestaLecturas
 from .serializers import (
     CatalogoCupsSerializer, ConfiguracionEquipoSerializer, EstadoExamenSerializer,
     EstadoMuestraSerializer, EstadoOrdenSerializer, ExamenAgregarSerializer,
-    ExamenSolicitadoSerializer, InformeResultadosSerializer, LecturaEquipoSerialSerializer,
+    ExamenSolicitadoSerializer, IndicadoresSerializer, InformeResultadosSerializer, LecturaEquipoSerialSerializer,
     MotivoSerializer, MuestraCrearSerializer, MuestraFisicaSerializer, NotificacionSerializer,
     OrdenCrearSerializer, OrdenEditarSerializer, OrdenLaboratorioSerializer, PacienteSerializer,
     ParametroExamenSerializer, RechazoSerializer, ResultadoAnalitoSerializer,
     ResultadoRegistrarSerializer, SexoBiologicoSerializer, TipoDocumentoPacienteSerializer,
 )
+from .services import etiquetas as svc_etiquetas
 from .services import examenes as svc_examenes
+from .services import indicadores as svc_indicadores
 from .services import informes as svc_informes
 from .services import muestras as svc_muestras
 from .services import ordenes as svc_ordenes
@@ -369,6 +371,7 @@ class MuestraFisicaViewSet(CustodiaMuestraMixin, EstandarRespuestaViewSet):
         'list': 'muestras.ver', 'retrieve': 'muestras.ver', 'create': 'muestras.registrar',
         'buscar': 'muestras.buscar', 'recibir_laboratorio': 'muestras.recibir', 'rechazar': 'muestras.rechazar',
         'custodia': 'custodia.ver', 'evento': 'custodia.registrar', 'alicuota': 'muestras.recibir', 'descartar': 'muestras.recibir',
+        'etiqueta_pdf': 'muestras.etiqueta',
     }
     search_fields = ['codigo_barras', 'orden__numero_orden']
     filterset_fields = ['orden', 'estado_muestra__nombre', 'condicion_muestra']
@@ -414,6 +417,24 @@ class MuestraFisicaViewSet(CustodiaMuestraMixin, EstandarRespuestaViewSet):
             serializer.validated_data.get('condicion_muestra'), request=request,
         )
         return exito('Muestra rechazada. Se notificó al flebotomista y al médico.', muestra_id=str(muestra.pk))
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter('formato', OpenApiTypes.STR, enum=list(svc_etiquetas.FORMATOS),
+                             description='individual = 50 × 25 mm (impresora de etiquetas); hoja = carta 3 × 10 (impresora común)'),
+            OpenApiParameter('copias', OpenApiTypes.INT, description=f'1 a {svc_etiquetas.MAX_COPIAS}'),
+        ],
+        responses={(200, 'application/pdf'): OpenApiTypes.BINARY},
+    )
+    @action(detail=True, methods=['get'], url_path='etiqueta-pdf')
+    def etiqueta_pdf(self, request, pk=None):
+        """Etiqueta con código de barras Code 128 (RF-60.1). Cada impresión queda en la custodia (RF-60.2)."""
+        pdf, nombre, _ = svc_etiquetas.imprimir_etiqueta(
+            request.user, pk, request.query_params.get('formato'), request.query_params.get('copias'), request=request,
+        )
+        respuesta = HttpResponse(pdf, content_type='application/pdf')
+        respuesta['Content-Disposition'] = f'inline; filename="{nombre}"'
+        return respuesta
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -548,6 +569,40 @@ class InformeResultadosViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [PermisoPorAccion]
     accion_lectura = 'informes.ver'
     filterset_fields = ['orden', 'tipo', 'vigente']
+
+    @extend_schema(responses={(200, 'application/pdf'): OpenApiTypes.BINARY})
+    @action(detail=True, methods=['get'])
+    def pdf(self, request, pk=None):
+        """PDF guardado del informe, para imprimirlo sin generar uno nuevo (RF-37.6)."""
+        informe = self.get_object()
+        if not informe.archivo_pdf:
+            raise NoEncontrado('El informe no tiene un archivo PDF guardado.')
+        with informe.archivo_pdf.open('rb') as f:
+            pdf_bytes = f.read()
+        nombre = f'{"PARCIAL_" if informe.tipo == "parcial" else ""}informe_{informe.orden.numero_orden}.pdf'
+        auditoria.registrar(request, 'informe.imprimir', 'InformeResultados', informe.pk,
+                            {'orden': informe.orden.numero_orden, 'tipo': informe.tipo})
+        respuesta = HttpResponse(pdf_bytes, content_type='application/pdf')
+        respuesta['Content-Disposition'] = f'inline; filename="{nombre}"'
+        return respuesta
+
+
+class IndicadoresViewSet(viewsets.ViewSet):
+    """Indicadores agregados de operación para el dashboard (RF-74.1). Sin datos de pacientes."""
+    permission_classes = [PermisoPorAccion]
+    accion_lectura = 'indicadores.ver'
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter('fecha_inicio', OpenApiTypes.DATE, description='Por defecto, 30 días antes de fecha_fin'),
+            OpenApiParameter('fecha_fin', OpenApiTypes.DATE, description='Por defecto, hoy'),
+        ],
+        responses={200: IndicadoresSerializer},
+    )
+    def list(self, request):
+        datos = svc_indicadores.calcular(request.query_params.get('fecha_inicio'), request.query_params.get('fecha_fin'))
+        auditoria.registrar(request, 'indicadores.consultar', 'Indicadores', None, datos['periodo'])
+        return Response(datos)
 
 
 class NotificacionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):

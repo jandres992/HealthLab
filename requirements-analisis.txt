@@ -1,0 +1,4 @@
+# Dependencias del análisis exploratorio de datos (RF-74).
+# No son necesarias para ejecutar la API: pip install -r requirements-analisis.txt
+pandas==2.3.3
+matplotlib==3.10.7

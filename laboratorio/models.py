@@ -539,6 +539,7 @@ class EventoMuestra(models.Model):
     """
     TIPO_CHOICES = [
         ('toma', 'Toma'),
+        ('etiqueta', 'Impresión de etiqueta'),
         ('transporte', 'Transporte'),
         ('recepcion', 'Recepción en laboratorio'),
         ('alicuota', 'Alícuota'),

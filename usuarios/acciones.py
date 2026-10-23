@@ -65,6 +65,7 @@ MATRIZ = {
     'muestras.buscar': R.ROLES_CLINICOS,
     'muestras.recibir': (R.BACTERIOLOGO,),
     'muestras.rechazar': (R.BACTERIOLOGO,),
+    'muestras.etiqueta': (R.TECNICO, R.BACTERIOLOGO),             # imprimir y reimprimir etiqueta (RF-60.2)
 
     # ── Exámenes y resultados ───────────────────────────────────────────────
     'examenes.ver': R.ROLES_CLINICOS,
@@ -78,6 +79,9 @@ MATRIZ = {
     'resultados.ver': (R.MEDICO, R.BACTERIOLOGO, R.AUDITOR),
     'resultados.registrar': (R.BACTERIOLOGO,),
     'informes.ver': (R.MEDICO, R.BACTERIOLOGO, R.AUDITOR),
+
+    # ── Indicadores de operación (datos agregados, sin pacientes; RF-74) ────
+    'indicadores.ver': (R.AUDITOR, R.ADMINISTRADOR),
 }
 
 

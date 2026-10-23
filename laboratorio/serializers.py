@@ -308,3 +308,82 @@ class NotificacionSerializer(serializers.ModelSerializer):
         fields = ['id', 'destinatario', 'destinatario_username', 'orden', 'orden_numero', 'tipo',
                   'mensaje', 'leida', 'fecha_creacion', 'fecha_lectura']
         read_only_fields = fields
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Indicadores del dashboard (RF-74, RF-74.1): solo datos agregados, sin pacientes
+# ─────────────────────────────────────────────────────────────────────────────
+
+class PeriodoIndicadoresSerializer(serializers.Serializer):
+    fecha_inicio = serializers.DateField()
+    fecha_fin = serializers.DateField()
+    dias = serializers.IntegerField()
+
+
+class TotalesIndicadoresSerializer(serializers.Serializer):
+    ordenes = serializers.IntegerField()
+    examenes = serializers.IntegerField()
+    muestras = serializers.IntegerField()
+    resultados = serializers.IntegerField()
+
+
+class ConteoEstadoSerializer(serializers.Serializer):
+    estado = serializers.CharField()
+    total = serializers.IntegerField()
+
+
+class ConteoDiaSerializer(serializers.Serializer):
+    fecha = serializers.DateField()
+    total = serializers.IntegerField()
+
+
+class ConteoCupsSerializer(serializers.Serializer):
+    codigo = serializers.CharField()
+    descripcion = serializers.CharField()
+    total = serializers.IntegerField()
+
+
+class TiempoExamenSerializer(serializers.Serializer):
+    codigo = serializers.CharField()
+    descripcion = serializers.CharField()
+    total = serializers.IntegerField()
+    mediana_horas = serializers.FloatField(allow_null=True)
+    p90_horas = serializers.FloatField(allow_null=True)
+
+
+class TiempoOrdenValidacionSerializer(serializers.Serializer):
+    examenes_validados = serializers.IntegerField()
+    mediana_horas = serializers.FloatField(allow_null=True)
+    p90_horas = serializers.FloatField(allow_null=True)
+    por_examen = TiempoExamenSerializer(many=True)
+
+
+class MotivoRechazoSerializer(serializers.Serializer):
+    motivo = serializers.CharField()
+    total = serializers.IntegerField()
+
+
+class MuestrasIndicadoresSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    rechazadas = serializers.IntegerField()
+    porcentaje_rechazo = serializers.FloatField()
+    motivos = MotivoRechazoSerializer(many=True)
+
+
+class ResultadosIndicadoresSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    anormales = serializers.IntegerField()
+    criticos = serializers.IntegerField()
+    porcentaje_anormales = serializers.FloatField()
+    porcentaje_criticos = serializers.FloatField()
+
+
+class IndicadoresSerializer(serializers.Serializer):
+    periodo = PeriodoIndicadoresSerializer()
+    totales = TotalesIndicadoresSerializer()
+    ordenes_por_estado = ConteoEstadoSerializer(many=True)
+    ordenes_por_dia = ConteoDiaSerializer(many=True)
+    cups_mas_solicitados = ConteoCupsSerializer(many=True)
+    tiempo_orden_validacion = TiempoOrdenValidacionSerializer()
+    muestras = MuestrasIndicadoresSerializer()
+    resultados = ResultadosIndicadoresSerializer()

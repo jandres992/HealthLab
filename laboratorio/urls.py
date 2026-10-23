@@ -22,6 +22,8 @@ from .views import (
     # FASE 6 — Informes y notificaciones
     InformeResultadosViewSet,
     NotificacionViewSet,
+    # Cierre de la Fase 1 del producto — dashboard de indicadores (RF-74)
+    IndicadoresViewSet,
 )
 
 router = DefaultRouter()
@@ -47,6 +49,7 @@ router.register(r'resultados', ResultadoAnalitoViewSet, basename='resultados')
 # ── FASE 6 ────────────────────────────────────────────────────────────────────
 router.register(r'informes', InformeResultadosViewSet, basename='informes')
 router.register(r'notificaciones', NotificacionViewSet, basename='notificaciones')
+router.register(r'indicadores', IndicadoresViewSet, basename='indicadores')
 # ── FASE 2 — custodia, calidad, críticos, lotes ───────────────────────────────
 from .views_calidad import CorridaCCIViewSet, CriticoViewSet, EventoMuestraViewSet, LoteControlViewSet, LoteReactivoViewSet  # noqa: E402
 router.register(r'eventos-muestra', EventoMuestraViewSet, basename='eventos-muestra')
