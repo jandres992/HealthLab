@@ -1,0 +1,28 @@
+# Python / Django
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
+*.sqlite3
+db.sqlite3
+media/
+static/
+staticfiles/
+analisis_salida/
+schema.yaml
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Entornos y secretos
+.env
+.env.*
+!.env.example
+
+# Editores y sistema
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
