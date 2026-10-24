@@ -2,19 +2,20 @@ asgiref==3.11.1
 attrs==25.4.0
 charset-normalizer==3.4.6
 dj-database-url==3.0.1
-Django==6.0.3
 django-cors-headers==4.9.0
 django-filter==25.1
 django-simple-history==3.10.1
+Django==6.0.3
 djangorestframework==3.16.1
 djangorestframework_simplejwt==5.5.1
 drf-spectacular==0.29.0
 gunicorn==25.3.0
 inflection==0.5.1
-jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
+jsonschema==4.26.0
 packaging==26.2
 pillow==12.1.1
+psycopg[binary]==3.3.6
 PyJWT==2.11.0
 python-dotenv==1.1.1
 PyYAML==6.0.3
@@ -25,3 +26,4 @@ sqlparse==0.5.5
 typing_extensions==4.15.0
 tzdata==2025.3
 uritemplate==4.2.0
+whitenoise==6.12.0

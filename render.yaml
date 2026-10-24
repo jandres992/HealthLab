@@ -1,0 +1,44 @@
+# Blueprint de Render para la API de HealthLab (Django REST Framework + PostgreSQL).
+# En Render: New → Blueprint → elegir este repositorio. Render crea la base de datos y el servicio web.
+# Los valores con `sync: false` los pide Render al crear el Blueprint.
+
+databases:
+  - name: healthlab-db
+    plan: free
+    databaseName: healthlab
+    user: healthlab
+
+services:
+  - type: web
+    name: healthlab-api
+    runtime: python
+    plan: free
+    buildCommand: >-
+      pip install -r requirements.txt &&
+      python manage.py collectstatic --noinput &&
+      python manage.py migrate --noinput &&
+      if [ "$CARGAR_DATOS_DE_PRUEBA" = "true" ]; then python manage.py seed_test_data; fi
+    startCommand: gunicorn HealthLab.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --timeout 60
+    healthCheckPath: /admin/login/
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.8"
+      - key: DJANGO_DEBUG
+        value: "false"
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: healthlab-db
+          property: connectionString
+      # Dirección de la versión web publicada, más los orígenes de la app Android (Capacitor).
+      # Ejemplo: https://healthlab-web.onrender.com,capacitor://localhost,https://localhost
+      - key: DJANGO_CORS_ALLOWED_ORIGINS
+        sync: false
+      # Muestra /api/docs/ (Swagger) también en producción.
+      - key: DJANGO_EXPONER_DOCS
+        value: "true"
+      # "true" solo para una demostración: crea los usuarios y datos de prueba del seed.
+      # Esas cuentas usan una contraseña conocida; no lo activen con datos reales.
+      - key: CARGAR_DATOS_DE_PRUEBA
+        value: "false"
