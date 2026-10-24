@@ -62,6 +62,15 @@ class AutenticacionTests(BaseUsuariosTest):
         self.assertEqual(r.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
         self.assertEqual(r.data['estado'], 'limite_excedido')
 
+    def test_limite_por_usuario_no_bloquea_a_otros_de_la_misma_ip(self):
+        # D-04: los errores de un usuario no bloquean al resto del laboratorio (misma IP).
+        for _ in range(6):
+            self.login('medico1', password='mala')
+        self.assertEqual(self.login('medico1', password='mala').status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        self.assertEqual(self.login('MEDICO1', password='mala').status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        r = self.login('bact1')
+        self.assertNotEqual(r.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
     def test_refresh_y_logout(self):
         tokens = self.login('medico1').data
         r = self.client.post('/usr/token/refresh/', {'refresh': tokens['refresh']}, format='json')

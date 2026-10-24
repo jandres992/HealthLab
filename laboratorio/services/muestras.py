@@ -62,8 +62,12 @@ def registrar_muestra(actor, orden, datos, examenes_ids=None, request=None):
                 examen.estado_examen = recolectada
                 examen.save(update_fields=['muestra', 'estado_examen'])
                 vinculados += 1
-        if examenes_ids and vinculados == 0:
-            raise ErrorDeValidacion('Ninguno de los exámenes indicados admite una nueva muestra.')
+        if vinculados == 0:
+            # D-03: una toma que no vincula exámenes no se registra (la transacción la deshace).
+            if examenes_ids:
+                raise ErrorDeValidacion('Ninguno de los exámenes indicados admite una nueva muestra.')
+            raise ErrorDeDominio('Ningún examen de la orden está pendiente de muestra; '
+                                 'revise la orden antes de registrar otra toma.')
 
         auditoria.registrar(request, 'muestra.registrar', 'MuestraFisica', muestra.pk,
                             {'codigo_barras': muestra.codigo_barras, 'orden': orden.numero_orden,

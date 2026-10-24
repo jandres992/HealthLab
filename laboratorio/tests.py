@@ -384,9 +384,14 @@ class IdempotenciaTests(BaseLaboratorioTest):
         self.assertEqual(r2['Idempotent-Replayed'], 'true')
         self.assertEqual(r1.data['datos']['id'], r2.data['datos']['id'])
         self.assertEqual(MuestraFisica.objects.filter(orden=orden).count(), 1)
-        r3 = self.client.post('/api/v1/muestras/', cuerpo, format='json', HTTP_IDEMPOTENCY_KEY='clave-xyz')
+        # Con otra clave se registra otra toma; se usa otra orden porque la primera ya no tiene
+        # exámenes pendientes de muestra (D-03).
+        orden2 = self.crear_orden()
+        self.como(self.tecnico)
+        r3 = self.client.post('/api/v1/muestras/', {'orden': str(orden2.pk), 'tipo_muestra': 'Orina'},
+                              format='json', HTTP_IDEMPOTENCY_KEY='clave-xyz')
         self.assertEqual(r3.status_code, 201)
-        self.assertEqual(MuestraFisica.objects.filter(orden=orden).count(), 2)
+        self.assertEqual(MuestraFisica.objects.filter(orden__in=[orden, orden2]).count(), 2)
 
     def test_error_no_consume_la_clave(self):
         self.como(self.tecnico)

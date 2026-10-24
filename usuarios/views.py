@@ -28,6 +28,7 @@ from .serializers import (
     TipoIdSerializer, TipoUsuarioSerializer, TokenPersonalizadoSerializer,
     UsuarioSerializer, UsuarioXPermisoSerializer,
 )
+from .throttles import LoginPorIPThrottle, LoginPorUsuarioThrottle
 from .tokens import revocar_tokens_de
 
 logger = logging.getLogger(__name__)
@@ -231,7 +232,7 @@ class LoginPersonalizadoView(TokenObtainPairView):
     serializer_class = TokenPersonalizadoSerializer
     permission_classes = [AllowAny]
     authentication_classes = []
-    throttle_scope = 'login'
+    throttle_classes = [LoginPorUsuarioThrottle, LoginPorIPThrottle]
 
     def post(self, request, *args, **kwargs):
         username = str(request.data.get('username', ''))[:150]

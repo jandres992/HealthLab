@@ -214,6 +214,7 @@ REST_FRAMEWORK = {
     ),
     'DEFAULT_THROTTLE_RATES': {
         'login': os.environ.get('DJANGO_LOGIN_THROTTLE', '5/min'),
+        'login_ip': os.environ.get('DJANGO_LOGIN_IP_THROTTLE', '30/min'),   # D-04: tope por IP, más alto
         'refresh': '30/min',
         'latido': '120/min',
     },
