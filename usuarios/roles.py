@@ -19,7 +19,7 @@ ROLES_CLINICOS = (MEDICO, TECNICO, BACTERIOLOGO, AUDITOR)
 
 ETIQUETAS = {
     MEDICO: 'Médico',
-    TECNICO: 'Técnico de Enfermería',
+    TECNICO: 'Auxiliar de Enfermería',
     BACTERIOLOGO: 'Bacteriólogo',
     AUDITOR: 'Auditor',
     ADMINISTRADOR: 'Administrador',
@@ -33,6 +33,7 @@ _SINONIMOS = {
     'tecnico_enfermeria': TECNICO,
     'tecnico': TECNICO,
     'auxiliar_de_enfermeria': TECNICO,
+    'auxiliar_enfermeria': TECNICO,
     'enfermeria': TECNICO,
     'flebotomista': TECNICO,
     'bacteriologo': BACTERIOLOGO,

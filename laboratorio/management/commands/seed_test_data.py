@@ -146,7 +146,7 @@ class Command(BaseCommand):
             ("Médico", "Personal médico autorizado para generar órdenes y consultar resultados"),
             ("Bacteriólogo", "Profesional de laboratorio que valida, firma y rechaza resultados"),
             ("Administrador", "Gestión integral del sistema, usuarios, equipos y configuración"),
-            ("Técnico de Enfermería", "Flebotomista encargado de toma, etiquetado y trazabilidad de muestras"),
+            ("Auxiliar de Enfermería", "Flebotomista encargado de toma, etiquetado y trazabilidad de muestras"),
             ("Auditor", "Control de calidad, verificación CUPS, métricas y exportación RIPS"),
         ]
         tipos_usuario_objs = []
@@ -199,7 +199,7 @@ class Command(BaseCommand):
 
         # Asignación de roles a usuarios de prueba según el documento:
         # 0,1 = Médico, 2,3 = Bacteriólogo, 4 = Administrador,
-        # 5,6 = Técnico de Enfermería, 7,8 = Auditor, 9 = Administrador
+        # 5,6 = Auxiliar de Enfermería, 7,8 = Auditor, 9 = Administrador
         rol_map = {0: 0, 1: 0, 2: 1, 3: 1, 4: 2, 5: 3, 6: 3, 7: 4, 8: 4, 9: 2}
         for idx, usuario in enumerate(usuarios):
             permiso = permisos[rol_map[idx]]
